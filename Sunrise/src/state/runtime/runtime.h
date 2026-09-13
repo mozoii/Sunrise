@@ -139,6 +139,8 @@ struct PendingItemAcquisition {
     bool directGrant{};
     build_data::items::QuestInitialization questInitialization{};
     std::int32_t previousQuestValue{};
+    /** Weekly vendor claim written in the grant's own transaction; empty for most grants. */
+    vendors::rotation::Claim rotationClaim{};
     bool prepared{};
 
     /**
@@ -197,6 +199,8 @@ struct PendingProfileItemAcquisition {
     bool appended{};
     /** Skips Collections revalidation for direct rewards. */
     bool directGrant{};
+    /** Weekly vendor claim written in the grant's own transaction; empty for most grants. */
+    vendors::rotation::Claim rotationClaim{};
     bool prepared{};
 };
 
@@ -550,7 +554,7 @@ set_selected_title(std::uint16_t recordIndex, std::uint64_t& characterSoid, bool
  * collectible's material set.
  * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
  * @param definitionHash Installed item definition the row sells.
- * @param purchase The row's cost.
+ * @param purchase The row's cost, and any weekly claim to record with the grant.
  * @param mutation Gets a checked after-image without changing account State.
  * @param refusal Receives why the cost refused, or none when the grant itself refused.
  * @return True when the charge and the grant both fit the account.
@@ -640,7 +644,7 @@ prepare_profile_item_acquisition_for_item(std::uint16_t itemDefinitionIndex,
  * collectible's material set.
  * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
  * @param definitionHash Installed stackable definition the row sells.
- * @param purchase The row's cost.
+ * @param purchase The row's cost, and any weekly claim to record with the grant.
  * @param mutation Gets the checked profile before/after images without changing account State.
  * @param refusal Receives why the cost refused, or none when the grant itself refused.
  * @return True when the charge and one unit of the item both fit the profile.

@@ -46,6 +46,18 @@ void set_sign_in_time(std::uint64_t seconds) noexcept;
 [[nodiscard]] bool bootstrap_completed(std::string_view name) noexcept;
 [[nodiscard]] bool complete_bootstrap(std::string_view name) noexcept;
 
+/**
+ * Reads the week a rotating vendor last sold its weekly engram.
+ * @param found Receives whether the vendor has a row; a vendor without one has never sold it.
+ * @param lastEngramWeek Receives the recorded week; zero when there is no row.
+ * @return False only when the database could not be read.
+ */
+[[nodiscard]] bool
+read_vendor_rotation(std::uint32_t vendorHash, bool& found, std::uint32_t& lastEngramWeek) noexcept;
+/** Records the week a rotating vendor sold its weekly engram. */
+[[nodiscard]] bool write_vendor_rotation(std::uint32_t vendorHash,
+                                         std::uint32_t lastEngramWeek) noexcept;
+
 /** An earned reward stays in the database until its inventory grant commits. */
 struct PendingReward {
     std::uint64_t id{};

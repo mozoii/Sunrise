@@ -106,6 +106,7 @@
     <ClCompile Include="src\state\investment\investment_inventory_store.cpp" />
     <ClCompile Include="src\state\investment\investment_store_boot.cpp" />
     <ClCompile Include="src\state\investment\investment_unlock_store.cpp" />
+    <ClCompile Include="src\state\investment\investment_vendor_rotation_store.cpp" />
     <ClCompile Include="vendor\sqlite\sqlite3.c">
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
@@ -658,6 +659,7 @@
     <ClCompile Include="src\state\build_data\vendors\vendor_catalog.cpp" />
     <ClCompile Include="src\state\build_data\vendors\artifact_sale_view.cpp" />
     <ClCompile Include="src\state\build_data\vendors\vendor_expression.cpp" />
+    <ClCompile Include="src\state\vendors\rotation.cpp" />
     <ClCompile Include="src\client\content\vendors\package_vendor_build.cpp" />
     <ClCompile Include="src\state\build_data\cache\records\cache_hash_name_records.cpp" />
     <ClCompile Include="src\state\build_data\cache\records\cache_entity_metadata_records.cpp" />
@@ -1952,6 +1954,7 @@
     <ClInclude Include="src\state\build_data\vendors\repeatable_triggers.h" />
     <ClInclude Include="src\state\vendors\charge.h" />
     <ClInclude Include="src\state\vendors\purchase.h" />
+    <ClInclude Include="src\state\vendors\rotation.h" />
     <ClInclude Include="src\state\build_data\progressions\definition.h" />
     <ClInclude Include="src\state\entitlements\definition.h" />
     <ClInclude Include="src\state\entitlements\entitlement_runtime.h" />

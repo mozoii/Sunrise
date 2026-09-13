@@ -1,5 +1,5 @@
 PRAGMA application_id = 1397902921;
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 
 CREATE TABLE account (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -108,6 +108,11 @@ CREATE TABLE entitlements (
 CREATE TABLE bootstrap (
     name TEXT PRIMARY KEY,
     completed INTEGER NOT NULL CHECK (completed IN (0, 1))
+) STRICT;
+
+CREATE TABLE vendor_rotation (
+    vendor_hash INTEGER NOT NULL PRIMARY KEY CHECK (vendor_hash BETWEEN 1 AND 4294967295),
+    last_engram_week INTEGER NOT NULL CHECK (last_engram_week BETWEEN 0 AND 4294967295)
 ) STRICT;
 
 CREATE TABLE pending_rewards (

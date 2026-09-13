@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "../../core/logging/log.h"
+#include "../../core/runtime/server_clock.h"
 #include "../../middleware/web_service/messages/opcode1820.h"
 #include "../../middleware/web_service/messages/opcode901/opcode901_codec.h"
 #include "../../middleware/web_service/messages/opcode904/opcode904_codec.h"
@@ -20,8 +21,10 @@
 #include "../../state/build_data/runtime.h"
 #include "../../state/build_data/vendors/repeatable_triggers.h"
 #include "../../state/build_data/vendors/vendor_catalog.h"
+#include "../../state/investment/store.h"
 #include "../../state/runtime/runtime.h"
 #include "../../state/vendors/purchase.h"
+#include "../../state/vendors/rotation.h"
 #include "internal_actions.h"
 #include "web_service_actions.h"
 
@@ -128,6 +131,8 @@ void report_purchase(std::uint16_t opcode,
 
 /** One vendor sale row as a purchase names it, resolved from the request's two indices. */
 struct ResolvedSale {
+    /** Vendor definition hash, which is what the rotation policy is keyed by. */
+    std::uint32_t vendorHash{};
     /** Item the row sells. */
     std::uint16_t itemDefinitionIndex{kUnavailableDefinitionIndex};
     /** Row +100, or `kAbsentCategoryIndex` when the request named no sale row. */
@@ -550,17 +555,20 @@ void acquire_item(const middleware::web_service::Message& message, Outcome& outc
 
 /**
  * Resolves one vendor row to the item it sells. Shared by 901 and 904, which name a row alike.
+ * A rotating vendor also has to be in town: the client picks which of his rows to show each week
+ * on its own, but nothing client-side stops a purchase while he is away, so the server does.
  * @param vendorIndex Vendor table row.
  * @param rowIndex Sale row within that vendor.
  * @param sale Receives the row: its vendor, item, category and cost.
  * @param reason Receives the step that failed, when one does.
- * @return True when the row resolved.
+ * @return True when the row resolved and is on sale now.
  */
 [[nodiscard]] bool resolve_vendor_row(std::int32_t vendorIndex,
                                       std::int32_t rowIndex,
                                       ResolvedSale& sale,
                                       const char*& reason) noexcept {
     namespace vendor_domain = state::build_data::vendors;
+    namespace rotation = state::vendors::rotation;
     sale = {};
     if (vendorIndex < 0 || rowIndex < 0) {
         reason = "negative_index";
@@ -577,6 +585,11 @@ void acquire_item(const middleware::web_service::Message& message, Outcome& outc
         reason = "sale_row";
         return false;
     }
+    if (!rotation::present(entry.definitionHash, core::runtime::server_clock_seconds())) {
+        reason = "vendor_absent";
+        return false;
+    }
+    sale.vendorHash = entry.definitionHash;
     sale.itemDefinitionIndex = row.itemIndex;
     sale.categoryIndex = row.categoryIndex;
     sale.charge = state::vendors::Charge::of(row);
@@ -710,6 +723,7 @@ void settle_vendor_row(const middleware::web_service::Message& message,
                        std::int32_t rowIndex,
                        const ResolvedSale& sale,
                        Outcome& outcome) noexcept {
+    namespace rotation = state::vendors::rotation;
     const std::int32_t categoryIndex = sale.categoryIndex;
     const std::uint16_t itemDefinitionIndex = sale.itemDefinitionIndex;
     std::uint16_t rolledBounty = kUnavailableDefinitionIndex;
@@ -759,7 +773,23 @@ void settle_vendor_row(const middleware::web_service::Message& message,
     }
     std::uint16_t collectibleIndex = state::build_data::collectibles::kNoCollectibleIndex;
     const bool collected = find_collectible_for_item(granted, collectibleIndex);
-    const state::vendors::Purchase purchase{.charge = sale.charge};
+    state::vendors::Purchase purchase{.charge = sale.charge};
+    // A rotating vendor sells its engram once a week. The claim rides on the grant so the week is
+    // only spent when the engram actually lands.
+    if (rotation::rotates(sale.vendorHash) && categoryIndex == rotation::kXurEngramCategory) {
+        const std::uint32_t thisWeek = rotation::week(core::runtime::server_clock_seconds());
+        bool claimed = false;
+        std::uint32_t lastWeek = 0;
+        if (!state::investment::store::read_vendor_rotation(sale.vendorHash, claimed, lastWeek)) {
+            report_purchase(opcode, "fail", "rotation_store", vendorIndex, rowIndex, granted);
+            return;
+        }
+        if (claimed && lastWeek == thisWeek) {
+            report_purchase(opcode, "fail", "engram_this_week", vendorIndex, rowIndex, granted);
+            return;
+        }
+        purchase.claim = {sale.vendorHash, thisWeek};
+    }
     report_purchase(opcode,
                     "ok",
                     collected ? "resolved" : "resolved_no_collectible",

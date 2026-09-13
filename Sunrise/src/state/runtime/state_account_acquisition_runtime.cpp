@@ -222,7 +222,7 @@ bool prepare_item_acquisition(std::uint16_t collectibleIndex,
  * one, still names the grant so commit can re-check it.
  * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
  * @param definitionHash Item definition the row sells.
- * @param purchase The row's cost.
+ * @param purchase The row's cost, and any weekly claim to record with the grant.
  * @param mutation Receives a pending grant; prepared is set only on success.
  * @param refusal Receives why the cost refused, or none when the grant itself refused.
  * @return False when identity, cost, capacity, or saved state prevent the grant.
@@ -265,15 +265,19 @@ bool prepare_vendor_item_acquisition(std::uint16_t collectibleIndex,
 
     // Commit re-checks the collectible's own cost fields, so the mutation carries those and the
     // sale charge is proven only by its before/after profile images.
-    return finalize_item_acquisition(
-        account,
-        chargedAccount,
-        definitionHash,
-        profileChanged,
-        {.materialRequirementSetHash = collectible.materialRequirementSetHash,
-         .collectibleIndex = collectibleIndex,
-         .materialRequirementCount = collectible.materialRequirementCount},
-        mutation);
+    if (!finalize_item_acquisition(
+            account,
+            chargedAccount,
+            definitionHash,
+            profileChanged,
+            {.materialRequirementSetHash = collectible.materialRequirementSetHash,
+             .collectibleIndex = collectibleIndex,
+             .materialRequirementCount = collectible.materialRequirementCount},
+            mutation)) {
+        return false;
+    }
+    mutation.rotationClaim = purchase.claim;
+    return true;
 }
 
 /**
@@ -644,6 +648,12 @@ bool commit_item_acquisition(PendingItemAcquisition& mutation) noexcept {
         && !investment::store::write_unlock(quest_bank(quest), quest.row, quest.value)) {
         return false;
     }
+    // The weekly claim lands with the grant or not at all, so a failed grant never burns the week.
+    if (prepared.rotationClaim.vendorHash != 0
+        && !investment::store::write_vendor_rotation(prepared.rotationClaim.vendorHash,
+                                                     prepared.rotationClaim.week)) {
+        return false;
+    }
     return transaction.commit();
 }
 
@@ -852,17 +862,21 @@ bool prepare_vendor_profile_item_acquisition(std::uint16_t collectibleIndex,
 
     // Commit re-checks the collectible's own cost fields, so the mutation carries those and the
     // sale charge is proven only by its before/after profile images.
-    return finalize_profile_item_acquisition(
-        account,
-        chargedAccount,
-        definitionHash,
-        detail,
-        actionSource,
-        1,
-        {.materialRequirementSetHash = collectible.materialRequirementSetHash,
-         .collectibleIndex = collectibleIndex,
-         .materialRequirementCount = collectible.materialRequirementCount},
-        mutation);
+    if (!finalize_profile_item_acquisition(
+            account,
+            chargedAccount,
+            definitionHash,
+            detail,
+            actionSource,
+            1,
+            {.materialRequirementSetHash = collectible.materialRequirementSetHash,
+             .collectibleIndex = collectibleIndex,
+             .materialRequirementCount = collectible.materialRequirementCount},
+            mutation)) {
+        return false;
+    }
+    mutation.rotationClaim = purchase.claim;
+    return true;
 }
 
 /** Prepares one direct profile-stack grant, with no Collections row or material charge. */
@@ -898,8 +912,7 @@ bool preview_profile_item_acquisition(const PendingProfileItemAcquisition& mutat
     return materialize_profile_acquisition(current, mutation, after);
 }
 
-/** Commits one profile-stack after-image only while its exact prepare-time view remains
- * current. */
+/** Commits one profile-stack after-image only while its exact prepare-time view remains current. */
 bool commit_profile_item_acquisition(PendingProfileItemAcquisition& mutation) noexcept {
     const PendingProfileItemAcquisition& prepared = mutation;
     const PendingConsumption consume{mutation};
@@ -907,18 +920,20 @@ bool commit_profile_item_acquisition(PendingProfileItemAcquisition& mutation) no
         return false;
     }
 
-    investment::store::g_mutex.lock();
+    // One savepoint holds the account write and the weekly claim, so neither lands alone.
+    investment::store::Transaction transaction;
     AccountState candidate{};
-    const bool ready =
-        materialize_profile_acquisition(investment::store::account(), prepared, candidate);
-    if (ready) {
-        if (!investment::store::write_account(candidate)) {
-            investment::store::g_mutex.unlock();
-            return false;
-        }
+    if (!transaction.ready()
+        || !materialize_profile_acquisition(investment::store::account(), prepared, candidate)
+        || !investment::store::write_account(candidate)) {
+        return false;
     }
-    investment::store::g_mutex.unlock();
-    return ready;
+    if (prepared.rotationClaim.vendorHash != 0
+        && !investment::store::write_vendor_rotation(prepared.rotationClaim.vendorHash,
+                                                     prepared.rotationClaim.week)) {
+        return false;
+    }
+    return transaction.commit();
 }
 
 } // namespace sunrise::state
