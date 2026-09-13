@@ -294,6 +294,70 @@ apply_collection_materials(const AccountState& before,
         changed);
 }
 
+/** One vendor price-override row, shaped so the material engine consumes it unchanged. */
+struct SaleRequirement {
+    std::uint16_t itemDefinitionIndex{};
+    std::uint32_t quantity{};
+    bool deleteOnAction{true};
+};
+
+/** @return True when the engine could debit this item: a stackable profile item, not a source. */
+[[nodiscard]] static bool payable_cost_item(std::uint16_t itemDefinitionIndex) noexcept {
+    build_data::items::Definition definition{};
+    item_details::Definition detail{};
+    inventory_buckets::Descriptor bucket{};
+    return itemDefinitionIndex != build_data::vendors::kAbsentCostItem
+           && build_data::find_item_definition_index(itemDefinitionIndex, definition)
+           && definition.definitionIndex == itemDefinitionIndex
+           && build_data::find_configured_item_detail(itemDefinitionIndex, detail)
+           && detail.definitionIndex == itemDefinitionIndex
+           && detail.definitionHash == definition.definitionHash
+           && detail.bucketId == definition.bucketId
+           && detail.instancedDefinitionState == item_details::InstancedDefinitionState::stackable
+           && build_data::find_inventory_bucket_descriptor(definition.bucketId, bucket)
+           && bucket.arraySelector == inventory_buckets::ArraySelector::profile
+           && !build_data::is_profile_action_source(definition.definitionIndex,
+                                                    definition.bucketId);
+}
+
+[[nodiscard]] bool apply_sale_charge(const AccountState& before,
+                                     const vendors::Charge& charge,
+                                     AccountState& after,
+                                     bool& changed,
+                                     vendors::ChargeRefusal& refusal) noexcept {
+    after = before;
+    changed = false;
+    refusal = vendors::ChargeRefusal::none;
+    if (charge.is_free()) {
+        return true;
+    }
+    std::array<SaleRequirement, build_data::vendors::kSaleCostCapacity> requirements{};
+    std::size_t requirementCount = 0;
+    for (const build_data::vendors::SaleCost& cost : charge.entries()) {
+        if (cost.quantity == 0) {
+            continue;
+        }
+        // A cost row the engine cannot debit is a row this build does not understand, which is
+        // refused as its own thing rather than reported as an empty wallet.
+        if (!payable_cost_item(cost.itemIndex)) {
+            refusal = vendors::ChargeRefusal::malformedCost;
+            return false;
+        }
+        requirements[requirementCount++] = {cost.itemIndex, cost.quantity, true};
+    }
+    if (apply_material_requirements<SaleRequirement>(
+            before,
+            std::span<const SaleRequirement>{requirements.data(), requirementCount},
+            after,
+            changed)) {
+        return true;
+    }
+    after = before;
+    changed = false;
+    refusal = vendors::ChargeRefusal::insufficient;
+    return false;
+}
+
 /** @return True when the account holds the requested socket-action source. */
 [[nodiscard]] bool holds_plug_source(const AccountState& account,
                                      std::uint32_t definitionHash) noexcept {

@@ -99,6 +99,16 @@ apply_collection_materials(const AccountState& before,
                            const build_data::collectibles::Definition& collectible,
                            AccountState& after,
                            bool& changed) noexcept;
+/**
+ * Applies one sale row's cost through the same validation Collections materials use.
+ * @param refusal Receives why the charge was refused, or none.
+ * @return True when every cost row was payable and paid, or the row was free.
+ */
+[[nodiscard]] bool apply_sale_charge(const AccountState& before,
+                                     const vendors::Charge& charge,
+                                     AccountState& after,
+                                     bool& changed,
+                                     vendors::ChargeRefusal& refusal) noexcept;
 [[nodiscard]] bool
 valid_profile_mutation_shape(const PendingProfileItemAcquisition& mutation) noexcept;
 [[nodiscard]] bool materialize_profile_acquisition(const AccountState& current,

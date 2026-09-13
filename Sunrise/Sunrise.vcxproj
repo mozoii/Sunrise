@@ -1950,6 +1950,8 @@
     <ClInclude Include="src\state\build_data\bounties\definition.h" />
     <ClInclude Include="src\state\build_data\bounties\bounty_catalog.h" />
     <ClInclude Include="src\state\build_data\vendors\repeatable_triggers.h" />
+    <ClInclude Include="src\state\vendors\charge.h" />
+    <ClInclude Include="src\state\vendors\purchase.h" />
     <ClInclude Include="src\state\build_data\progressions\definition.h" />
     <ClInclude Include="src\state\entitlements\definition.h" />
     <ClInclude Include="src\state\entitlements\entitlement_runtime.h" />
