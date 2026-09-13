@@ -89,17 +89,19 @@ read(std::span<const std::byte> blob, std::size_t offset, Value& value) noexcept
 }
 
 /**
- * Reads what one sale row charges, from the first row of its price-override array.
- * A row charging nothing declares no override, which is data rather than a malformed row.
+ * Reads what one sale row charges: every row of its price-override array, in order.
+ * A row charging nothing declares no override, which is data rather than a malformed row. A row
+ * declaring more overrides than the catalog can hold is refused, so a charge is never a subset of
+ * what the package asks for.
  * @param blob Whole definition blob.
  * @param at Sale row offset inside the blob.
- * @param value Receives the cost item and quantity, or the absent cost.
- * @return True when the array is absent, or resolves and ends inside the blob.
+ * @param value Receives the cost rows, or none.
+ * @return True when the array is absent, or resolves, fits, and ends inside the blob.
  */
 [[nodiscard]] bool
 read_sale_cost(std::span<const std::byte> blob, std::size_t at, domain::SaleRow& value) noexcept {
-    value.costItemIndex = domain::kAbsentCostItem;
-    value.costQuantity = 0;
+    value.costs = {};
+    value.costCount = 0;
     ArrayView cost{};
     if (!read_array(blob, at + kSaleCostArrayDescriptor, domain::kSaleCostRowStride, cost)) {
         return false;
@@ -107,9 +109,19 @@ read_sale_cost(std::span<const std::byte> blob, std::size_t at, domain::SaleRow&
     if (cost.count == 0) {
         return true;
     }
-    return cost.classId == domain::kSaleCostRowClass
-           && read(blob, cost.base + kSaleCostItemIndexOffset, value.costItemIndex)
-           && read(blob, cost.base + kSaleCostQuantityOffset, value.costQuantity);
+    if (cost.classId != domain::kSaleCostRowClass || cost.count > value.costs.size()) {
+        return false;
+    }
+    for (std::size_t row = 0; row < cost.count; ++row) {
+        const std::size_t rowAt = cost.base + (row * domain::kSaleCostRowStride);
+        domain::SaleCost& entry = value.costs[row];
+        if (!read(blob, rowAt + kSaleCostItemIndexOffset, entry.itemIndex)
+            || !read(blob, rowAt + kSaleCostQuantityOffset, entry.quantity)) {
+            return false;
+        }
+    }
+    value.costCount = static_cast<std::uint8_t>(cost.count);
+    return true;
 }
 
 /**

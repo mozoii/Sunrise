@@ -8,6 +8,7 @@
 
 #include "../build_data/items/quest_initialization.h"
 #include "../build_data/records/definition.h"
+#include "../vendors/purchase.h"
 #include "state.h"
 
 namespace sunrise::state::account::settings {
@@ -533,6 +534,22 @@ set_selected_title(std::uint16_t recordIndex, std::uint64_t& characterSoid, bool
 [[nodiscard]] bool prepare_item_acquisition_for_item(std::uint16_t itemDefinitionIndex,
                                                      PendingItemAcquisition& mutation) noexcept;
 
+/**
+ * Prepares one vendor sale row's character-item grant, charging the row's own cost instead of a
+ * collectible's material set.
+ * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
+ * @param definitionHash Installed item definition the row sells.
+ * @param purchase The row's cost.
+ * @param mutation Gets a checked after-image without changing account State.
+ * @param refusal Receives why the cost refused, or none when the grant itself refused.
+ * @return True when the charge and the grant both fit the account.
+ */
+[[nodiscard]] bool prepare_vendor_item_acquisition(std::uint16_t collectibleIndex,
+                                                   std::uint32_t definitionHash,
+                                                   const vendors::Purchase& purchase,
+                                                   PendingItemAcquisition& mutation,
+                                                   vendors::ChargeRefusal& refusal) noexcept;
+
 /** Prepares one fixed wrapper expansion without changing account State. */
 [[nodiscard]] bool prepare_direct_item_bundle(std::uint32_t sourceDefinitionHash,
                                               std::span<const std::uint16_t> itemDefinitionIndices,
@@ -606,6 +623,23 @@ prepare_profile_item_acquisition(std::uint16_t collectibleIndex,
 prepare_profile_item_acquisition_for_item(std::uint16_t itemDefinitionIndex,
                                           std::int32_t quantity,
                                           PendingProfileItemAcquisition& mutation) noexcept;
+
+/**
+ * Prepares one vendor sale row's profile-stack grant, charging the row's own cost instead of a
+ * collectible's material set.
+ * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
+ * @param definitionHash Installed stackable definition the row sells.
+ * @param purchase The row's cost.
+ * @param mutation Gets the checked profile before/after images without changing account State.
+ * @param refusal Receives why the cost refused, or none when the grant itself refused.
+ * @return True when the charge and one unit of the item both fit the profile.
+ */
+[[nodiscard]] bool
+prepare_vendor_profile_item_acquisition(std::uint16_t collectibleIndex,
+                                        std::uint32_t definitionHash,
+                                        const vendors::Purchase& purchase,
+                                        PendingProfileItemAcquisition& mutation,
+                                        vendors::ChargeRefusal& refusal) noexcept;
 
 /**
  * Materializes a prepared profile acquisition over the current account only while its complete
