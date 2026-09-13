@@ -17,3 +17,6 @@
 /out/
 /docs/
 /Sunrise/docs/
+
+# Local developer tooling and research scripts
+/tools/
