@@ -4,7 +4,9 @@
 #include <limits>
 #include <string_view>
 
+#include "../../../core/runtime/server_clock.h"
 #include "../../../state/activity/membership/definition.h"
+#include "../../../state/vendors/rotation.h"
 #include "mission_script_lua_internal.h"
 #include "mission_script_lua_names.h"
 #include "mission_script_lua_peer_internal.h"
@@ -210,6 +212,32 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
     return queue_intent(state, frame, intent);
 }
 
+/**
+ * Answers whether a vendor is in town now under the server's weekly clock, so a controller can
+ * place a rotating vendor's squad on the same schedule the purchase path refuses on. A vendor the
+ * policy does not rotate is always present.
+ */
+[[nodiscard]] int context_vendor_present(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    const lua_Integer value = luaL_checkinteger(state, 2);
+    if (value <= 0
+        || value > static_cast<lua_Integer>((std::numeric_limits<std::uint32_t>::max)())) {
+        return luaL_argerror(state, 2, "vendor hash must be a nonzero u32");
+    }
+    const bool present = ::sunrise::state::vendors::rotation::present(
+        static_cast<std::uint32_t>(value), core::runtime::server_clock_seconds());
+    lua_pushboolean(state, present ? 1 : 0);
+    return 1;
+}
+
+/** @return The server's rotation week: weeks since the policy epoch, zero before it. */
+[[nodiscard]] int context_vendor_week(lua_State* state) {
+    static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
+    lua_pushinteger(
+        state, ::sunrise::state::vendors::rotation::week(core::runtime::server_clock_seconds()));
+    return 1;
+}
+
 /** Lua index for the mission context: its collections, phase, variables and timers. */
 [[nodiscard]] int context_index(lua_State* state) {
     static_cast<void>(luaL_checkudata(state, 1, kContextMetatable));
@@ -253,6 +281,10 @@ resolve_message_name(lua_State* state, std::string_view name, ActivityMessageDef
         lua_pushcfunction(state, &context_start_timer);
     } else if (key == "cancel_timer") {
         lua_pushcfunction(state, &context_cancel_timer);
+    } else if (key == "vendor_present") {
+        lua_pushcfunction(state, &context_vendor_present);
+    } else if (key == "vendor_week") {
+        lua_pushcfunction(state, &context_vendor_week);
     } else if (!push_key_context_member(state, key)) {
         lua_pushnil(state);
     }
