@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -83,21 +84,38 @@ struct Definition {
     std::uint16_t thirdCount{};
 };
 
-/** A sale row charging nothing carries this instead of a cost item. */
+/** A price-override row naming no item carries this. */
 inline constexpr std::uint16_t kAbsentCostItem = 0xFFFFU;
+/**
+ * Price-override rows one sale row may declare. The Bungie.net manifest's per-item currency list
+ * for this era holds at most three; a row declaring more is refused rather than truncated.
+ */
+inline constexpr std::size_t kSaleCostCapacity = 4;
+
+/**
+ * One price-override row (sale row +32 array, `kSaleCostRowClass`): what the sale charges.
+ * Observed on Xûr's definition: item 128 with 29, 23, 97 and 9 units, which are exactly the
+ * Legendary Shard prices of his weapon, armour, Fated Engram and Invitation of the Nine rows.
+ */
+struct SaleCost {
+    /** Override row +0. Cost item-definition index. */
+    std::uint16_t itemIndex{kAbsentCostItem};
+    /** Override row +4. Units charged. */
+    std::uint32_t quantity{};
+};
 
 /** One sale row of one vendor definition. */
 struct SaleRow {
     /** Row +100. The row's vendor category. The catalog bounds it by the category count. */
     std::int32_t categoryIndex{};
-    /** First price-override row's charged units. Zero when the row charges nothing. */
-    std::uint32_t costQuantity{};
     /** Row +70. Main sale item-definition index. */
     std::uint16_t itemIndex{};
     /** Row +176. `kAbsentSecondaryItem` when the row names none. */
     std::uint16_t secondaryItemIndex{};
-    /** First price-override row's item, or `kAbsentCostItem` when the row charges nothing. */
-    std::uint16_t costItemIndex{kAbsentCostItem};
+    /** Every price-override row, in declared order. The row charges all of them together. */
+    std::array<SaleCost, kSaleCostCapacity> costs{};
+    /** Rows of `costs` in use. Zero when the row charges nothing. */
+    std::uint8_t costCount{};
 };
 
 /** One category row, reduced to the definition hash a rowless request resolves through. */
