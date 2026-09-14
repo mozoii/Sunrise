@@ -14,11 +14,13 @@
 #include <vector>
 
 #include "../../core/logging/log.h"
+#include "../../core/runtime/server_clock.h"
 #include "../../core/settings/settings.h"
 #include "../activity/defaults/activity_defaults_validation.h"
 #include "../build_data/runtime.h"
 #include "../investment/store_internal.h"
 #include "../unlocks/unlocks_records.h"
+#include "../vendors/rotation.h"
 #include "equipment/configured_equipment_identity.h"
 #include "runtime.h"
 #include "state.h"
@@ -370,7 +372,7 @@ bool new_bap_session(BapState& output) noexcept {
     return true;
 }
 
-/** Copies one complete evaluated content state with build-derived catalyst overrides. */
+/** Copies one complete evaluated content state with catalyst and vendor rotation overrides. */
 bool investment_snapshot(InvestmentState& output) noexcept {
     investment::store::g_mutex.lock();
     InvestmentState snapshot;
@@ -380,6 +382,13 @@ bool investment_snapshot(InvestmentState& output) noexcept {
         core::log::write(core::log::Channel::state,
                          core::log::Level::warn,
                          "ev=investment stage=snapshot result=fail reason=catalyst");
+        return false;
+    }
+    if (!vendors::rotation::append_investment_overrides(snapshot.family5,
+                                                        core::runtime::server_clock_seconds())) {
+        core::log::write(core::log::Channel::state,
+                         core::log::Level::warn,
+                         "ev=investment stage=snapshot result=fail reason=vendor_rotation");
         return false;
     }
     output = snapshot;

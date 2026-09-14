@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "../investment/investment.h"
+
 namespace sunrise::state::vendors::rotation {
 
 /** Xûr. Same hash space as the Bungie.net manifest (2190858386). */
@@ -42,5 +44,17 @@ struct Claim {
 
 /** @return True from the Friday reset until the Tuesday reset of the same week. */
 [[nodiscard]] bool present(std::uint32_t vendorHash, std::int64_t unixSeconds) noexcept;
+
+/**
+ * Publishes what a rotating vendor's own unlock expressions read: the flag its engram interaction
+ * tests is set for the week the engram was sold, and clear again after the reset. The client
+ * evaluates that gate itself and stops drawing the rows behind it, so a spent week takes the
+ * section off the vendor screen rather than leaving a row that only fails once it is clicked.
+ * @param family Candidate family-5 state; unchanged unless every override fits.
+ * @param unixSeconds Server clock.
+ * @return False when the rotation store could not be read or the override list is full.
+ */
+[[nodiscard]] bool append_investment_overrides(Family5State& family,
+                                               std::int64_t unixSeconds) noexcept;
 
 } // namespace sunrise::state::vendors::rotation
