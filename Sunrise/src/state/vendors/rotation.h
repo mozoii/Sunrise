@@ -39,6 +39,16 @@ struct Claim {
     return vendorHash == kXurVendorHash;
 }
 
+/**
+ * @param vendorHash Vendor being asked about.
+ * @param categoryIndex Sale-row category within that vendor.
+ * @return True when rows of that category may be bought once per weekly reset.
+ */
+[[nodiscard]] constexpr bool weekly_limited(std::uint32_t vendorHash,
+                                            std::int32_t categoryIndex) noexcept {
+    return rotates(vendorHash) && categoryIndex == kXurEngramCategory;
+}
+
 /** @return Weeks since the epoch; zero before it. */
 [[nodiscard]] std::uint32_t week(std::int64_t unixSeconds) noexcept;
 

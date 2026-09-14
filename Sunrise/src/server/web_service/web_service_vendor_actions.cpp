@@ -21,8 +21,8 @@
 #include "../../state/build_data/runtime.h"
 #include "../../state/build_data/vendors/repeatable_triggers.h"
 #include "../../state/build_data/vendors/vendor_catalog.h"
-#include "../../state/investment/store.h"
 #include "../../state/runtime/runtime.h"
+#include "../../state/vendors/availability.h"
 #include "../../state/vendors/purchase.h"
 #include "../../state/vendors/rotation.h"
 #include "internal_actions.h"
@@ -555,8 +555,8 @@ void acquire_item(const middleware::web_service::Message& message, Outcome& outc
 
 /**
  * Resolves one vendor row to the item it sells. Shared by 901 and 904, which name a row alike.
- * A rotating vendor also has to be in town: the client picks which of his rows to show each week
- * on its own, but nothing client-side stops a purchase while he is away, so the server does.
+ * The row also has to be on sale to this account right now, which the vendor availability policy
+ * decides; nothing client-side stops a purchase the policy refuses, so the server does.
  * @param vendorIndex Vendor table row.
  * @param rowIndex Sale row within that vendor.
  * @param sale Receives the row: its vendor, item, category and cost.
@@ -585,8 +585,17 @@ void acquire_item(const middleware::web_service::Message& message, Outcome& outc
         reason = "sale_row";
         return false;
     }
-    if (!rotation::present(entry.definitionHash, core::runtime::server_clock_seconds())) {
-        reason = "vendor_absent";
+    state::vendors::Availability availability{};
+    if (!state::vendors::evaluate(definition,
+                                  entry.definitionHash,
+                                  static_cast<std::size_t>(rowIndex),
+                                  core::runtime::server_clock_seconds(),
+                                  availability)) {
+        reason = "availability";
+        return false;
+    }
+    if (availability != state::vendors::Availability::purchasable) {
+        reason = state::vendors::reason(availability);
         return false;
     }
     sale.vendorHash = entry.definitionHash;
@@ -775,21 +784,10 @@ void settle_vendor_row(const middleware::web_service::Message& message,
     std::uint16_t collectibleIndex = state::build_data::collectibles::kNoCollectibleIndex;
     const bool collected = find_collectible_for_item(granted, collectibleIndex);
     state::vendors::Purchase purchase{.charge = sale.charge};
-    // A rotating vendor sells its engram once a week. The claim rides on the grant so the week is
-    // only spent when the engram actually lands.
-    if (rotation::rotates(sale.vendorHash) && categoryIndex == rotation::kXurEngramCategory) {
-        const std::uint32_t thisWeek = rotation::week(core::runtime::server_clock_seconds());
-        bool claimed = false;
-        std::uint32_t lastWeek = 0;
-        if (!state::investment::store::read_vendor_rotation(sale.vendorHash, claimed, lastWeek)) {
-            report_purchase(opcode, "fail", "rotation_store", vendorIndex, rowIndex, granted);
-            return;
-        }
-        if (claimed && lastWeek == thisWeek) {
-            report_purchase(opcode, "fail", "engram_this_week", vendorIndex, rowIndex, granted);
-            return;
-        }
-        purchase.claim = {sale.vendorHash, thisWeek};
+    // The availability policy already refused a row whose week is spent. The claim rides on the
+    // grant, so the week is only spent when the item actually lands.
+    if (rotation::weekly_limited(sale.vendorHash, categoryIndex)) {
+        purchase.claim = {sale.vendorHash, rotation::week(core::runtime::server_clock_seconds())};
     }
     report_purchase(opcode,
                     "ok",

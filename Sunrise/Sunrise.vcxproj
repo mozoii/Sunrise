@@ -660,6 +660,7 @@
     <ClCompile Include="src\state\build_data\vendors\vendor_catalog.cpp" />
     <ClCompile Include="src\state\build_data\vendors\artifact_sale_view.cpp" />
     <ClCompile Include="src\state\build_data\vendors\vendor_expression.cpp" />
+    <ClCompile Include="src\state\vendors\availability.cpp" />
     <ClCompile Include="src\state\vendors\rotation.cpp" />
     <ClCompile Include="src\client\content\vendors\package_vendor_build.cpp" />
     <ClCompile Include="src\state\build_data\cache\records\cache_hash_name_records.cpp" />
@@ -1954,6 +1955,7 @@
     <ClInclude Include="src\state\build_data\bounties\bounty_catalog.h" />
     <ClInclude Include="src\state\build_data\vendors\repeatable_triggers.h" />
     <ClInclude Include="src\state\investment\family5_overrides.h" />
+    <ClInclude Include="src\state\vendors\availability.h" />
     <ClInclude Include="src\state\vendors\charge.h" />
     <ClInclude Include="src\state\vendors\purchase.h" />
     <ClInclude Include="src\state\vendors\rotation.h" />
