@@ -32,16 +32,17 @@ bool encode(const vendors::Definition& value, VendorDefinitionRecord& record) no
     record.installedRowClass = value.installedRowClass;
     record.saleRowBase = value.saleRowBase;
     record.saleRowClass = value.saleRowClass;
-    record.thirdRowBase = value.thirdRowBase;
-    record.thirdRowClass = value.thirdRowClass;
+    record.interactionRowBase = value.interactionRowBase;
+    record.interactionRowClass = value.interactionRowClass;
     record.saleRowOffset = value.saleRowOffset;
     record.installedRowOffset = value.installedRowOffset;
+    record.interactionRowOffset = value.interactionRowOffset;
     record.resetIntervalRaw = value.resetIntervalRaw;
     record.resetPhaseRaw = value.resetPhaseRaw;
     record.index = value.index;
     record.installedCount = value.installedCount;
     record.saleCount = value.saleCount;
-    record.thirdCount = value.thirdCount;
+    record.interactionCount = value.interactionCount;
     return true;
 }
 
@@ -61,16 +62,17 @@ bool decode(const VendorDefinitionRecord& record, vendors::Definition& value) no
     value.installedRowClass = record.installedRowClass;
     value.saleRowBase = record.saleRowBase;
     value.saleRowClass = record.saleRowClass;
-    value.thirdRowBase = record.thirdRowBase;
-    value.thirdRowClass = record.thirdRowClass;
+    value.interactionRowBase = record.interactionRowBase;
+    value.interactionRowClass = record.interactionRowClass;
     value.saleRowOffset = record.saleRowOffset;
     value.installedRowOffset = record.installedRowOffset;
+    value.interactionRowOffset = record.interactionRowOffset;
     value.resetIntervalRaw = record.resetIntervalRaw;
     value.resetPhaseRaw = record.resetPhaseRaw;
     value.index = record.index;
     value.installedCount = record.installedCount;
     value.saleCount = record.saleCount;
-    value.thirdCount = record.thirdCount;
+    value.interactionCount = record.interactionCount;
     return true;
 }
 
@@ -126,6 +128,60 @@ bool encode(const vendors::InstalledRow& value, VendorInstalledRowRecord& record
 /** Decodes one vendor category row. */
 bool decode(const VendorInstalledRowRecord& record, vendors::InstalledRow& value) noexcept {
     value = {record.definitionHash};
+    return true;
+}
+
+/** Encodes one vendor interaction row. Unused instructions and indexes stay zero. */
+bool encode(const vendors::Interaction& value, VendorInteractionRecord& record) noexcept {
+    record = {};
+    if (value.programCount > value.program.size()
+        || value.failureCount > value.failureIndexes.size()) {
+        return false;
+    }
+    record.hash = value.hash;
+    record.categoryIndex = value.categoryIndex;
+    record.programCount = value.programCount;
+    record.failureCount = value.failureCount;
+    for (std::size_t index = 0; index < value.programCount; ++index) {
+        record.program[index] = {value.program[index].opcode, value.program[index].operand};
+    }
+    for (std::size_t index = 0; index < value.failureCount; ++index) {
+        record.failureIndexes[index] = value.failureIndexes[index];
+    }
+    return true;
+}
+
+/** Decodes one vendor interaction row. */
+bool decode(const VendorInteractionRecord& record, vendors::Interaction& value) noexcept {
+    value = {};
+    if (record.reserved != decltype(record.reserved){}
+        || record.programCount > record.program.size()
+        || record.failureCount > record.failureIndexes.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < record.program.size(); ++index) {
+        const VendorGateInstructionRecord& stored = record.program[index];
+        if (index >= record.programCount) {
+            if (stored.opcode != 0 || stored.operand != 0) {
+                return false;
+            }
+            continue;
+        }
+        value.program[index] = {stored.opcode, stored.operand};
+    }
+    for (std::size_t index = 0; index < record.failureIndexes.size(); ++index) {
+        if (index >= record.failureCount) {
+            if (record.failureIndexes[index] != 0) {
+                return false;
+            }
+            continue;
+        }
+        value.failureIndexes[index] = record.failureIndexes[index];
+    }
+    value.hash = record.hash;
+    value.categoryIndex = record.categoryIndex;
+    value.programCount = record.programCount;
+    value.failureCount = record.failureCount;
     return true;
 }
 

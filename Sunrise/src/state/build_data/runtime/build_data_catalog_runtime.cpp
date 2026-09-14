@@ -347,11 +347,13 @@ bool vendor_catalog_ready() noexcept {
 bool publish_vendor_catalog(std::span<const vendors::IndexEntry> index,
                             std::span<const vendors::Definition> definitions,
                             std::span<const vendors::SaleRow> saleRows,
-                            std::span<const vendors::InstalledRow> installedRows) noexcept {
+                            std::span<const vendors::InstalledRow> installedRows,
+                            std::span<const vendors::Interaction> interactions) noexcept {
     runtime::persistence::Transaction transaction;
     return transaction.active()
-           && transaction.finish(vendors::replace(index, definitions, saleRows, installedRows),
-                                 vendors::clear);
+           && transaction.finish(
+               vendors::replace(index, definitions, saleRows, installedRows, interactions),
+               vendors::clear);
 }
 
 namespace runtime {

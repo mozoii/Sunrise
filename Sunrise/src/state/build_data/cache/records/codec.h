@@ -165,4 +165,9 @@ namespace sunrise::state::build_data::cache::records {
 [[nodiscard]] bool decode(const VendorInstalledRowRecord& record,
                           vendors::InstalledRow& value) noexcept;
 
+[[nodiscard]] bool encode(const vendors::Interaction& value,
+                          VendorInteractionRecord& record) noexcept;
+[[nodiscard]] bool decode(const VendorInteractionRecord& record,
+                          vendors::Interaction& value) noexcept;
+
 } // namespace sunrise::state::build_data::cache::records

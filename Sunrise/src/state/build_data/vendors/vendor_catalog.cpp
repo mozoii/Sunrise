@@ -9,13 +9,14 @@
 namespace sunrise::state::build_data::vendors {
 namespace {
 
-// One lock covers all four tables. A definition names its rows by range, so a reader must
+// One lock covers all five tables. A definition names its rows by range, so a reader must
 // never see one table replaced and another not.
 core::threading::SrwLock g_lock;
 Table<IndexEntry, kIndexCapacity> g_index;
 Table<Definition, kDefinitionCapacity> g_definitions;
 Table<SaleRow, kSaleRowCapacity> g_saleRows;
 Table<InstalledRow, kInstalledRowCapacity> g_installedRows;
+Table<Interaction, kInteractionRowCapacity> g_interactions;
 
 /**
  * Checks one array a definition declares against the definition blob it sits in.
@@ -71,12 +72,11 @@ Table<InstalledRow, kInstalledRowCapacity> g_installedRows;
                          kSaleRowStride,
                          kSaleRowClass,
                          definition.definitionSize)
-           // The third array has no closed element class, so only its bounds are checked.
-           && array_fits(definition.thirdCount,
-                         definition.thirdRowBase,
-                         definition.thirdRowClass,
-                         kThirdRowStride,
-                         0,
+           && array_fits(definition.interactionCount,
+                         definition.interactionRowBase,
+                         definition.interactionRowClass,
+                         kInteractionRowStride,
+                         kInteractionRowClass,
                          definition.definitionSize);
 }
 
@@ -95,6 +95,28 @@ Table<InstalledRow, kInstalledRowCapacity> g_installedRows;
             value.categoryIndex == kAbsentCategoryIndex
             || (value.categoryIndex >= 0 && value.categoryIndex < definition.installedCount);
         if (!selects) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Checks the interaction rows one definition owns.
+ * @param definition Owning definition.
+ * @param interactions Complete flat interaction bank.
+ * @return True when every row's counts fit and it serves one of this definition's categories, or
+ * none.
+ */
+[[nodiscard]] bool canonical_interactions(const Definition& definition,
+                                          std::span<const Interaction> interactions) noexcept {
+    for (std::size_t row = 0; row < definition.interactionCount; ++row) {
+        const Interaction& value = interactions[definition.interactionRowOffset + row];
+        const bool serves =
+            value.categoryIndex == kAbsentInteractionCategory
+            || (value.categoryIndex >= 0 && value.categoryIndex < definition.installedCount);
+        if (!serves || value.programCount > value.program.size()
+            || value.failureCount > value.failureIndexes.size()) {
             return false;
         }
     }
@@ -130,22 +152,25 @@ template <typename Row>
 
 } // namespace
 
-/** Clears the index, every held definition, and both row banks under the catalog lock. */
+/** Clears the index, every held definition, and all three row banks under the catalog lock. */
 void clear() noexcept {
     const std::lock_guard guard(g_lock);
     g_index.clear();
     g_definitions.clear();
     g_saleRows.clear();
     g_installedRows.clear();
+    g_interactions.clear();
 }
 
 /** Checks one complete vendor catalog in canonical order. */
 bool valid(std::span<const IndexEntry> index,
            std::span<const Definition> definitions,
            std::span<const SaleRow> saleRows,
-           std::span<const InstalledRow> installedRows) noexcept {
+           std::span<const InstalledRow> installedRows,
+           std::span<const Interaction> interactions) noexcept {
     if (index.empty() || index.size() > kIndexCapacity || definitions.size() > kDefinitionCapacity
-        || saleRows.size() > kSaleRowCapacity || installedRows.size() > kInstalledRowCapacity) {
+        || saleRows.size() > kSaleRowCapacity || installedRows.size() > kInstalledRowCapacity
+        || interactions.size() > kInteractionRowCapacity) {
         return false;
     }
     for (std::size_t row = 0; row < index.size(); ++row) {
@@ -155,38 +180,47 @@ bool valid(std::span<const IndexEntry> index,
     }
     std::size_t saleOffset = 0;
     std::size_t installedOffset = 0;
+    std::size_t interactionOffset = 0;
     for (std::size_t row = 0; row < definitions.size(); ++row) {
         const Definition& definition = definitions[row];
         if (!canonical(definition, index) || definition.saleRowOffset != saleOffset
             || definition.installedRowOffset != installedOffset
+            || definition.interactionRowOffset != interactionOffset
             || definition.saleCount > saleRows.size() - saleOffset
             || definition.installedCount > installedRows.size() - installedOffset
+            || definition.interactionCount > interactions.size() - interactionOffset
             || (row != 0 && definitions[row - 1].index >= definition.index)
-            || !canonical_sale_rows(definition, saleRows)) {
+            || !canonical_sale_rows(definition, saleRows)
+            || !canonical_interactions(definition, interactions)) {
             return false;
         }
         saleOffset += definition.saleCount;
         installedOffset += definition.installedCount;
+        interactionOffset += definition.interactionCount;
     }
-    return saleOffset == saleRows.size() && installedOffset == installedRows.size();
+    return saleOffset == saleRows.size() && installedOffset == installedRows.size()
+           && interactionOffset == interactions.size();
 }
 
 /** Replaces the complete vendor catalog in one step. */
 bool replace(std::span<const IndexEntry> index,
              std::span<const Definition> definitions,
              std::span<const SaleRow> saleRows,
-             std::span<const InstalledRow> installedRows) noexcept {
-    if (!valid(index, definitions, saleRows, installedRows)) {
+             std::span<const InstalledRow> installedRows,
+             std::span<const Interaction> interactions) noexcept {
+    if (!valid(index, definitions, saleRows, installedRows, interactions)) {
         return false;
     }
     const std::lock_guard guard(g_lock);
-    // All four run with no short-circuit, so the set cannot be left half replaced. Capacity is
+    // All five run with no short-circuit, so the set cannot be left half replaced. Capacity is
     // the only reason one can refuse, and valid() already checked it.
     const bool storedIndex = g_index.replace(index);
     const bool storedDefinitions = g_definitions.replace(definitions);
     const bool storedSaleRows = g_saleRows.replace(saleRows);
     const bool storedInstalledRows = g_installedRows.replace(installedRows);
-    return storedIndex && storedDefinitions && storedSaleRows && storedInstalledRows;
+    const bool storedInteractions = g_interactions.replace(interactions);
+    return storedIndex && storedDefinitions && storedSaleRows && storedInstalledRows
+           && storedInteractions;
 }
 
 /** Finds one index row by the vendor definition hash. */
@@ -291,6 +325,22 @@ bool installed_row(const Definition& definition, std::size_t row, InstalledRow& 
     return true;
 }
 
+/** Reads one interaction row of one definition. */
+bool interaction(const Definition& definition, std::size_t row, Interaction& output) noexcept {
+    output = {};
+    if (row >= definition.interactionCount) {
+        return false;
+    }
+    const std::shared_lock guard(g_lock);
+    const auto bank = g_interactions.rows();
+    const std::size_t at = static_cast<std::size_t>(definition.interactionRowOffset) + row;
+    if (at >= bank.size()) {
+        return false;
+    }
+    output = bank[at];
+    return true;
+}
+
 /** Copies every index row in ascending index order. */
 bool snapshot_index(std::span<IndexEntry> output, std::size_t& count) noexcept {
     const std::shared_lock guard(g_lock);
@@ -315,6 +365,12 @@ bool snapshot_installed_rows(std::span<InstalledRow> output, std::size_t& count)
     return g_installedRows.snapshot(output, count);
 }
 
+/** Copies the whole flat interaction bank. */
+bool snapshot_interactions(std::span<Interaction> output, std::size_t& count) noexcept {
+    const std::shared_lock guard(g_lock);
+    return g_interactions.snapshot(output, count);
+}
+
 /** @return The index row count, read under the lock. */
 std::size_t count() noexcept {
     const std::shared_lock guard(g_lock);
@@ -337,6 +393,12 @@ std::size_t sale_row_count() noexcept {
 std::size_t installed_row_count() noexcept {
     const std::shared_lock guard(g_lock);
     return g_installedRows.count();
+}
+
+/** @return The flat interaction bank row count, read under the lock. */
+std::size_t interaction_count() noexcept {
+    const std::shared_lock guard(g_lock);
+    return g_interactions.count();
 }
 
 } // namespace sunrise::state::build_data::vendors

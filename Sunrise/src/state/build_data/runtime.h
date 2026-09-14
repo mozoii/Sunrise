@@ -742,13 +742,15 @@ find_nearest_spawn_point(std::string_view stem,
  * @param definitions Extracted definitions in ascending index order, which may be empty.
  * @param saleRows Complete flat sale bank in definition then row order.
  * @param installedRows Complete flat installed bank in definition then row order.
+ * @param interactions Complete flat interaction bank in definition then row order.
  * @return True when the rows pass the checks and any needed cache write succeeds.
  */
 [[nodiscard]] bool
 publish_vendor_catalog(std::span<const vendors::IndexEntry> index,
                        std::span<const vendors::Definition> definitions,
                        std::span<const vendors::SaleRow> saleRows,
-                       std::span<const vendors::InstalledRow> installedRows) noexcept;
+                       std::span<const vendors::InstalledRow> installedRows,
+                       std::span<const vendors::Interaction> interactions) noexcept;
 
 /**
  * An unsupported catalyst build finishes without writing an incomplete cache.

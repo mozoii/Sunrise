@@ -27,10 +27,12 @@ struct Storage {
     std::array<domain::Definition, domain::kDefinitionCapacity> definitions{};
     std::array<domain::SaleRow, domain::kSaleRowCapacity> saleRows{};
     std::array<domain::InstalledRow, domain::kInstalledRowCapacity> installedRows{};
+    std::array<domain::Interaction, domain::kInteractionRowCapacity> interactions{};
     std::size_t indexCount{};
     std::size_t definitionCount{};
     std::size_t saleRowCount{};
     std::size_t installedRowCount{};
+    std::size_t interactionCount{};
 };
 
 /** One array a definition or a sale row declares, reduced to what the catalog stores. */
@@ -210,6 +212,114 @@ read_index(const reader::Source& source, reader::Scratch& scratch, Storage& stor
 }
 
 /**
+ * Reads one interaction's unlock expression, in evaluation order.
+ * An interaction with no expression declares no array, which is data rather than a malformed
+ * row. An expression longer than the catalog can hold is refused, so a gate is never a prefix.
+ * @param blob Whole definition blob.
+ * @param at Interaction row offset inside the blob.
+ * @param value Receives the instructions, or none.
+ * @return True when the array is absent, or resolves, fits, and ends inside the blob.
+ */
+[[nodiscard]] bool read_interaction_program(std::span<const std::byte> blob,
+                                            std::size_t at,
+                                            domain::Interaction& value) noexcept {
+    value.program = {};
+    value.programCount = 0;
+    ArrayView program{};
+    if (!read_array(blob,
+                    at + kInteractionProgramDescriptor,
+                    domain::kInteractionInstructionStride,
+                    program)) {
+        return false;
+    }
+    if (program.count == 0) {
+        return true;
+    }
+    if (program.classId != domain::kInteractionProgramClass
+        || program.count > value.program.size()) {
+        return false;
+    }
+    for (std::size_t row = 0; row < program.count; ++row) {
+        const std::size_t rowAt = program.base + (row * domain::kInteractionInstructionStride);
+        domain::GateInstruction& instruction = value.program[row];
+        if (!read(blob, rowAt + kInteractionOpcodeOffset, instruction.opcode)
+            || !read(blob, rowAt + kInteractionOperandOffset, instruction.operand)) {
+            return false;
+        }
+    }
+    value.programCount = static_cast<std::uint8_t>(program.count);
+    return true;
+}
+
+/**
+ * Reads the failure-string indexes one interaction shows when its expression refuses.
+ * @param blob Whole definition blob.
+ * @param at Interaction row offset inside the blob.
+ * @param value Receives the indexes, or none.
+ * @return True when the array is absent, or resolves, fits, and ends inside the blob.
+ */
+[[nodiscard]] bool read_interaction_failures(std::span<const std::byte> blob,
+                                             std::size_t at,
+                                             domain::Interaction& value) noexcept {
+    value.failureIndexes = {};
+    value.failureCount = 0;
+    ArrayView failures{};
+    if (!read_array(blob,
+                    at + kInteractionFailureDescriptor,
+                    domain::kInteractionFailureStride,
+                    failures)) {
+        return false;
+    }
+    if (failures.count == 0) {
+        return true;
+    }
+    if (failures.classId != domain::kInteractionFailureClass
+        || failures.count > value.failureIndexes.size()) {
+        return false;
+    }
+    for (std::size_t row = 0; row < failures.count; ++row) {
+        const std::size_t rowAt = failures.base + (row * domain::kInteractionFailureStride);
+        std::uint32_t index = 0;
+        if (!read(blob, rowAt + kInteractionFailureIndexOffset, index)
+            || index > (std::numeric_limits<std::uint16_t>::max)()) {
+            return false;
+        }
+        value.failureIndexes[row] = static_cast<std::uint16_t>(index);
+    }
+    value.failureCount = static_cast<std::uint8_t>(failures.count);
+    return true;
+}
+
+/**
+ * Reads every interaction row of one definition into the flat bank.
+ * @param blob Whole definition blob.
+ * @param definition Definition whose interaction array was already resolved.
+ * @param storage Pass storage receiving the rows.
+ * @return True when every row is inside the blob and the bank holds them all.
+ */
+[[nodiscard]] bool read_interaction_rows(std::span<const std::byte> blob,
+                                         const domain::Definition& definition,
+                                         Storage& storage) noexcept {
+    if (definition.interactionCount > domain::kInteractionRowCapacity - storage.interactionCount) {
+        return false;
+    }
+    for (std::size_t row = 0; row < definition.interactionCount; ++row) {
+        const std::size_t at =
+            definition.interactionRowBase + (row * domain::kInteractionRowStride);
+        domain::Interaction& value = storage.interactions[storage.interactionCount + row];
+        value = {};
+        if (!read(blob, at + kInteractionHashOffset, value.hash)
+            || !read(blob, at + kInteractionCategoryOffset, value.categoryIndex)
+            || !read_interaction_program(blob, at, value)
+            || !read_interaction_failures(blob, at, value)) {
+            return false;
+        }
+    }
+    storage.interactionCount += definition.interactionCount;
+    return true;
+}
+
+/**
  * Reads one vendor definition and both of its row arrays.
  * @param source Package directory and borrowed block keys.
  * @param scratch Lock-owned block storage.
@@ -232,10 +342,11 @@ read_index(const reader::Source& source, reader::Scratch& scratch, Storage& stor
     const std::span<const std::byte> blob{storage.blob};
     ArrayView installed{};
     ArrayView sale{};
-    ArrayView third{};
+    ArrayView interactions{};
     if (!read_array(blob, kInstalledArrayDescriptor, domain::kInstalledRowStride, installed)
         || !read_array(blob, kSaleArrayDescriptor, domain::kSaleRowStride, sale)
-        || !read_array(blob, kThirdArrayDescriptor, domain::kThirdRowStride, third)) {
+        || !read_array(
+            blob, kInteractionArrayDescriptor, domain::kInteractionRowStride, interactions)) {
         return false;
     }
     domain::Definition definition{};
@@ -250,21 +361,25 @@ read_index(const reader::Source& source, reader::Scratch& scratch, Storage& stor
     definition.saleRowBase = sale.base;
     definition.saleRowClass = sale.classId;
     definition.saleCount = sale.count;
-    definition.thirdRowBase = third.base;
-    definition.thirdRowClass = third.classId;
-    definition.thirdCount = third.count;
+    definition.interactionRowBase = interactions.base;
+    definition.interactionRowClass = interactions.classId;
+    definition.interactionCount = interactions.count;
     definition.saleRowOffset = static_cast<std::uint32_t>(storage.saleRowCount);
     definition.installedRowOffset = static_cast<std::uint32_t>(storage.installedRowCount);
-    // A skipped definition must leave both banks exactly as it found them; an orphan sale row
+    definition.interactionRowOffset = static_cast<std::uint32_t>(storage.interactionCount);
+    // A skipped definition must leave every bank exactly as it found it; an orphan sale row
     // shifts the next definition's offset and `valid()` then rejects the whole set.
     const std::size_t saleRowsBefore = storage.saleRowCount;
     const std::size_t installedRowsBefore = storage.installedRowCount;
+    const std::size_t interactionsBefore = storage.interactionCount;
     if (!read(blob, kResetIntervalOffset, definition.resetIntervalRaw)
         || !read(blob, kResetPhaseOffset, definition.resetPhaseRaw)
         || !read_sale_rows(blob, definition, storage)
-        || !read_installed_rows(blob, definition, storage)) {
+        || !read_installed_rows(blob, definition, storage)
+        || !read_interaction_rows(blob, definition, storage)) {
         storage.saleRowCount = saleRowsBefore;
         storage.installedRowCount = installedRowsBefore;
+        storage.interactionCount = interactionsBefore;
         return false;
     }
     storage.definitions[storage.definitionCount] = definition;
@@ -333,7 +448,8 @@ bool build(const reader::Source& source, reader::Scratch& scratch) noexcept {
         std::span(storage.index).first(storage.indexCount),
         std::span(storage.definitions).first(storage.definitionCount),
         std::span(storage.saleRows).first(storage.saleRowCount),
-        std::span(storage.installedRows).first(storage.installedRowCount));
+        std::span(storage.installedRows).first(storage.installedRowCount),
+        std::span(storage.interactions).first(storage.interactionCount));
     report(storage, skipped, published ? "ok" : "publish");
     return published;
 }

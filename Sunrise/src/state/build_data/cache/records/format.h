@@ -31,7 +31,7 @@ namespace sunrise::state::build_data::cache::records {
 /** These 8 ASCII bytes mark a Sunrise build-data file. */
 inline constexpr std::array<char, 8> kCacheMagic{'S', 'U', 'N', 'R', 'I', 'S', 'E', 'B'};
 /** Bump when stored layouts or extracted values change; other versions are rebuilt. */
-inline constexpr std::uint32_t kCacheFormatVersion = 66;
+inline constexpr std::uint32_t kCacheFormatVersion = 67;
 /** Signed -1 on disk means there is no equipment slot. */
 inline constexpr std::int8_t kAbsentEquipmentSlot = -1;
 /** The standard 64-bit FNV-1a offset basis starts the payload checksum. */
@@ -95,6 +95,7 @@ struct Header {
     std::uint32_t vendorDefinitionCount{};
     std::uint32_t vendorSaleRowCount{};
     std::uint32_t vendorInstalledRowCount{};
+    std::uint32_t vendorInteractionCount{};
     std::uint32_t positionProfileCount{};
     std::uint32_t objectTypeCount{};
     std::uint32_t recordObjectiveCount{};
@@ -534,16 +535,17 @@ struct VendorDefinitionRecord {
     std::uint32_t installedRowClass{};
     std::uint32_t saleRowBase{};
     std::uint32_t saleRowClass{};
-    std::uint32_t thirdRowBase{};
-    std::uint32_t thirdRowClass{};
+    std::uint32_t interactionRowBase{};
+    std::uint32_t interactionRowClass{};
     std::uint32_t saleRowOffset{};
     std::uint32_t installedRowOffset{};
+    std::uint32_t interactionRowOffset{};
     std::uint32_t resetIntervalRaw{};
     std::uint32_t resetPhaseRaw{};
     std::uint16_t index{};
     std::uint16_t installedCount{};
     std::uint16_t saleCount{};
-    std::uint16_t thirdCount{};
+    std::uint16_t interactionCount{};
 };
 
 /** Disk form of one price-override row of a vendor sale row. */
@@ -570,6 +572,24 @@ struct VendorInstalledRowRecord {
     std::uint32_t definitionHash{};
 };
 
+/** Disk form of one unlock-expression instruction of a vendor interaction. */
+struct VendorGateInstructionRecord {
+    std::uint32_t opcode{};
+    std::uint32_t operand{};
+};
+
+/** Disk form of one vendor interaction row. Unused instructions and indexes stay zero. */
+struct VendorInteractionRecord {
+    std::uint32_t hash{};
+    std::int32_t categoryIndex{};
+    std::array<VendorGateInstructionRecord, vendors::kInteractionProgramCapacity> program{};
+    std::array<std::uint16_t, vendors::kInteractionFailureCapacity> failureIndexes{};
+    std::uint8_t programCount{};
+    std::uint8_t failureCount{};
+    /** Must be zero, so the packed interaction row always matches. */
+    std::array<std::uint8_t, 2> reserved{};
+};
+
 /** Disk form of one roster group object and its slots. */
 struct RosterGroupRecord {
     std::uint32_t registryKey{};
@@ -587,7 +607,7 @@ static_assert(sizeof(Prefix) == kCacheMagic.size() + sizeof(std::uint32_t));
 static_assert(sizeof(InvestmentConstants)
               == constants::kCharacterStatRowCount + 3 * sizeof(std::uint8_t));
 static_assert(sizeof(Header)
-              == kCacheMagic.size() + 39 * sizeof(std::uint32_t) + 2 * sizeof(std::uint64_t)
+              == kCacheMagic.size() + 40 * sizeof(std::uint32_t) + 2 * sizeof(std::uint64_t)
                      + sizeof(InvestmentConstants)
                      + sizeof(gameplay::entity_position_profiles::Fingerprint));
 static_assert(sizeof(SpawnPointRecord)
@@ -595,12 +615,18 @@ static_assert(sizeof(SpawnPointRecord)
                      + sizeof(std::uint16_t) + 2 * sizeof(std::uint8_t));
 static_assert(sizeof(VendorIndexRecord) == 2 * sizeof(std::uint32_t) + 2 * sizeof(std::uint16_t));
 static_assert(sizeof(VendorDefinitionRecord)
-              == 14 * sizeof(std::uint32_t) + 4 * sizeof(std::uint16_t));
+              == 15 * sizeof(std::uint32_t) + 4 * sizeof(std::uint16_t));
 static_assert(sizeof(VendorSaleCostRecord) == sizeof(std::uint32_t) + 2 * sizeof(std::uint16_t));
 static_assert(sizeof(VendorSaleRowRecord)
               == sizeof(std::int32_t) + vendors::kSaleCostCapacity * sizeof(VendorSaleCostRecord)
                      + 2 * sizeof(std::uint16_t) + 4 * sizeof(std::uint8_t));
 static_assert(sizeof(VendorInstalledRowRecord) == sizeof(std::uint32_t));
+static_assert(sizeof(VendorGateInstructionRecord) == 2 * sizeof(std::uint32_t));
+static_assert(sizeof(VendorInteractionRecord)
+              == 2 * sizeof(std::uint32_t)
+                     + vendors::kInteractionProgramCapacity * sizeof(VendorGateInstructionRecord)
+                     + vendors::kInteractionFailureCapacity * sizeof(std::uint16_t)
+                     + 4 * sizeof(std::uint8_t));
 static_assert(sizeof(HashNameRecord)
               == hash_names::kNameLength + sizeof(std::uint32_t) + 4 * sizeof(std::uint8_t));
 static_assert(sizeof(ScenarioRecord)

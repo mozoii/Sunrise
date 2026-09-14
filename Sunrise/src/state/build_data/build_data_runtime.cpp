@@ -145,7 +145,8 @@ bool initialize(void* module, std::uint64_t configuredEquipmentHash) noexcept {
             && !vendors::replace(domains.vendorIndex,
                                  domains.vendorDefinitions,
                                  domains.vendorSaleRows,
-                                 domains.vendorInstalledRows))
+                                 domains.vendorInstalledRows,
+                                 domains.vendorInteractions))
         || !hash_names::replace(domains.hashNames)
         || !gameplay::entity_position_profiles::restore(domains.positionProfiles,
                                                         domains.positionFingerprint)

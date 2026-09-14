@@ -22,7 +22,20 @@ inline constexpr std::size_t kSaleRowStride = 184;
 /** One installed row is 24 bytes. */
 inline constexpr std::size_t kInstalledRowStride = 24;
 /** One interaction row is 80 bytes. */
-inline constexpr std::size_t kThirdRowStride = 80;
+inline constexpr std::size_t kInteractionRowStride = 80;
+/**
+ * Interaction rows across every definition. Observed: 41 of the 511 vendors declare any, about
+ * 755 in all, and the largest vendor declares 57.
+ */
+inline constexpr std::size_t kInteractionRowCapacity = 1'024;
+/** One unlock-expression instruction is 8 bytes: the opcode, then its operand. */
+inline constexpr std::size_t kInteractionInstructionStride = 8;
+/** Instructions one interaction's unlock expression may hold. The longest observed is 36. */
+inline constexpr std::size_t kInteractionProgramCapacity = 48;
+/** One failure-index row is 8 bytes, the index in its low word. */
+inline constexpr std::size_t kInteractionFailureStride = 8;
+/** Failure indexes one interaction may name. The most observed is 2. */
+inline constexpr std::size_t kInteractionFailureCapacity = 4;
 /** One price-override row is 48 bytes: the cost item index, then the units it charges. */
 inline constexpr std::size_t kSaleCostRowStride = 48;
 /** Element class of a sale row's price-override array. */
@@ -38,11 +51,19 @@ inline constexpr std::uint32_t kDefinitionClass = 0x80807850U;
 inline constexpr std::uint32_t kInstalledRowClass = 0x80807860U;
 /** Element class of a definition's sale array. */
 inline constexpr std::uint32_t kSaleRowClass = 0x80807861U;
+/** Element class of a definition's interaction array. */
+inline constexpr std::uint32_t kInteractionRowClass = 0x80807857U;
+/** Element class of an interaction's unlock-expression array. */
+inline constexpr std::uint32_t kInteractionProgramClass = 0x80807D31U;
+/** Element class of an interaction's failure-index array. */
+inline constexpr std::uint32_t kInteractionFailureClass = 0x8080785BU;
 
 /** Sale row +176 carries this when the row names no secondary item. */
 inline constexpr std::uint16_t kAbsentSecondaryItem = 0xFFFFU;
 /** Sale row +100 carries this when the row belongs to no category. The client tests for it. */
 inline constexpr std::int32_t kAbsentCategoryIndex = -1;
+/** Interaction row +56 carries this when the interaction serves no category. */
+inline constexpr std::int32_t kAbsentInteractionCategory = -1;
 
 /** One row of the installed vendor index, which maps a vendor hash to its definition tag. */
 struct IndexEntry {
@@ -66,13 +87,15 @@ struct Definition {
     /** First sale row, as an offset into the definition blob. */
     std::uint32_t saleRowBase{};
     std::uint32_t saleRowClass{};
-    /** First row of the unnamed third array, as an offset into the definition blob. */
-    std::uint32_t thirdRowBase{};
-    std::uint32_t thirdRowClass{};
+    /** First interaction row, as an offset into the definition blob. */
+    std::uint32_t interactionRowBase{};
+    std::uint32_t interactionRowClass{};
     /** First row of this definition's range in the flat sale bank. */
     std::uint32_t saleRowOffset{};
     /** First row of this definition's range in the flat installed bank. */
     std::uint32_t installedRowOffset{};
+    /** First row of this definition's range in the flat interaction bank. */
+    std::uint32_t interactionRowOffset{};
     /** Raw definition +20. Its unit, epoch and scope are open, so it is not converted. */
     std::uint32_t resetIntervalRaw{};
     /** Raw definition +24, paired with the interval and equally open. */
@@ -81,15 +104,12 @@ struct Definition {
     std::uint16_t index{};
     std::uint16_t installedCount{};
     std::uint16_t saleCount{};
-    std::uint16_t thirdCount{};
+    std::uint16_t interactionCount{};
 };
 
 /** A price-override row naming no item carries this. */
 inline constexpr std::uint16_t kAbsentCostItem = 0xFFFFU;
-/**
- * Price-override rows one sale row may declare. The Bungie.net manifest's per-item currency list
- * for this era holds at most three; a row declaring more is refused rather than truncated.
- */
+/** Price-override rows one sale row may declare. A row declaring more is refused, not truncated. */
 inline constexpr std::size_t kSaleCostCapacity = 4;
 
 /**
@@ -121,6 +141,36 @@ struct SaleRow {
 /** One category row, reduced to the definition hash a rowless request resolves through. */
 struct InstalledRow {
     std::uint32_t definitionHash{};
+};
+
+/** One unlock-expression instruction, as authored. An opcode that takes no operand leaves it. */
+struct GateInstruction {
+    std::uint32_t opcode{};
+    std::uint32_t operand{};
+};
+
+/**
+ * One interaction row of one vendor definition: a dialog the vendor offers, with the unlock
+ * expression the client evaluates before offering it and the failure strings it shows when the
+ * expression refuses.
+ * The expression is a visibility gate rather than a purchasability one: rows behind a failed gate
+ * are not drawn, and a category that loses every row goes with them. Observed on Xûr's definition,
+ * where the interaction serving his engram category tests one flag and negates it, and names
+ * failure index 3, the same index both of his engram sale rows carry.
+ */
+struct Interaction {
+    /** Row +4. Hash naming the interaction. */
+    std::uint32_t hash{};
+    /** Row +56. Vendor category the interaction serves, or `kAbsentInteractionCategory`. */
+    std::int32_t categoryIndex{kAbsentInteractionCategory};
+    /** Row +8 array, `kInteractionProgramClass`: the unlock expression, in evaluation order. */
+    std::array<GateInstruction, kInteractionProgramCapacity> program{};
+    /** Row +40 array, `kInteractionFailureClass`: failure-string indexes the refusal shows. */
+    std::array<std::uint16_t, kInteractionFailureCapacity> failureIndexes{};
+    /** Instructions of `program` in use. Zero when the interaction declares no expression. */
+    std::uint8_t programCount{};
+    /** Entries of `failureIndexes` in use. */
+    std::uint8_t failureCount{};
 };
 
 } // namespace sunrise::state::build_data::vendors

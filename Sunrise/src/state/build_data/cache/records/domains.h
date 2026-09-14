@@ -58,6 +58,7 @@ struct DomainCounts {
     std::size_t vendorDefinitions{};
     std::size_t vendorSaleRows{};
     std::size_t vendorInstalledRows{};
+    std::size_t vendorInteractions{};
     std::size_t positionProfiles{};
     std::size_t objectTypes{};
     std::size_t recordObjectives{};
@@ -100,6 +101,7 @@ struct MutableDomains {
     std::span<vendors::Definition> vendorDefinitions;
     std::span<vendors::SaleRow> vendorSaleRows;
     std::span<vendors::InstalledRow> vendorInstalledRows;
+    std::span<vendors::Interaction> vendorInteractions;
     std::span<gameplay::entity_position_profiles::Row> positionProfiles;
     gameplay::entity_position_profiles::Fingerprint* positionFingerprint{};
     std::span<gameplay::entity_object_types::Row> objectTypes;
@@ -142,6 +144,7 @@ struct Domains {
     std::span<const vendors::Definition> vendorDefinitions;
     std::span<const vendors::SaleRow> vendorSaleRows;
     std::span<const vendors::InstalledRow> vendorInstalledRows;
+    std::span<const vendors::Interaction> vendorInteractions;
     std::span<const gameplay::entity_position_profiles::Row> positionProfiles;
     gameplay::entity_position_profiles::Fingerprint positionFingerprint{};
     std::span<const gameplay::entity_object_types::Row> objectTypes;

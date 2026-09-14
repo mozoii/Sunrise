@@ -112,6 +112,8 @@ void clear(records::MutableDomains output) noexcept {
     std::fill(output.vendorInstalledRows.begin(),
               output.vendorInstalledRows.end(),
               vendors::InstalledRow{});
+    std::fill(
+        output.vendorInteractions.begin(), output.vendorInteractions.end(), vendors::Interaction{});
     std::fill(output.recordObjectives.begin(),
               output.recordObjectives.end(),
               build_data::records::Objective{});
@@ -160,6 +162,7 @@ bool expected_size(const records::DomainCounts& counts, std::uint64_t& size) noe
            && add_records(counts.vendorSaleRows, sizeof(records::VendorSaleRowRecord), size)
            && add_records(
                counts.vendorInstalledRows, sizeof(records::VendorInstalledRowRecord), size)
+           && add_records(counts.vendorInteractions, sizeof(records::VendorInteractionRecord), size)
            && add_records(counts.positionProfiles, sizeof(records::PositionProfileRecord), size)
            && add_records(counts.objectTypes, sizeof(records::ObjectTypeRecord), size)
            && add_records(counts.recordObjectives, sizeof(records::RecordObjectiveRecord), size)
@@ -262,6 +265,9 @@ bool read_payload(HANDLE file,
             && read_domain<records::VendorInstalledRowRecord>(
                 file, output.vendorInstalledRows.first(counts.vendorInstalledRows), checksum);
     valid = valid
+            && read_domain<records::VendorInteractionRecord>(
+                file, output.vendorInteractions.first(counts.vendorInteractions), checksum);
+    valid = valid
             && read_domain<records::PositionProfileRecord>(
                 file, output.positionProfiles.first(counts.positionProfiles), checksum);
     valid = valid
@@ -322,6 +328,7 @@ bool read_payload(HANDLE file,
             output.vendorDefinitions.first(counts.vendorDefinitions),
             output.vendorSaleRows.first(counts.vendorSaleRows),
             output.vendorInstalledRows.first(counts.vendorInstalledRows),
+            output.vendorInteractions.first(counts.vendorInteractions),
             output.positionProfiles.first(counts.positionProfiles),
             fingerprint,
             output.objectTypes.first(counts.objectTypes),
