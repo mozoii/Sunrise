@@ -7,6 +7,7 @@
 #include <shared_mutex>
 
 #include "../../../account/inventory/item_state.h"
+#include "../../../investment/family5_overrides.h"
 #include "../../../unlocks/definition.h"
 #include "../../table.h"
 #include "../details/definition.h"
@@ -46,31 +47,8 @@ std::atomic<bool> g_completionEnabled{true};
  */
 [[nodiscard]] bool
 upsert_flag(state::Family5State& family, std::uint16_t slot, bool appendMissing) noexcept {
-    const std::size_t oldCount = family.flagCount;
-    std::size_t write = 0;
-    bool found = false;
-    for (std::size_t read = 0; read < oldCount; ++read) {
-        const state::UnlockFlagOverride row = family.flags[read];
-        if (row.slot == slot) {
-            if (!found) {
-                family.flags[write++] = {slot, state::unlocks::kFlagSet};
-                found = true;
-            }
-            continue;
-        }
-        family.flags[write++] = row;
-    }
-    if (!found && appendMissing) {
-        if (write >= family.flags.size()) {
-            return false;
-        }
-        family.flags[write++] = {slot, state::unlocks::kFlagSet};
-    }
-    for (std::size_t index = write; index < oldCount; ++index) {
-        family.flags[index] = {};
-    }
-    family.flagCount = write;
-    return true;
+    return state::investment::upsert_flag_override(
+        family, slot, state::unlocks::kFlagSet, appendMissing);
 }
 
 /** Raises one signed value slot and removes duplicate authored rows for that slot. */

@@ -107,6 +107,7 @@
     <ClCompile Include="src\state\investment\investment_store_boot.cpp" />
     <ClCompile Include="src\state\investment\investment_unlock_store.cpp" />
     <ClCompile Include="src\state\investment\investment_vendor_rotation_store.cpp" />
+    <ClCompile Include="src\state\investment\family5_overrides.cpp" />
     <ClCompile Include="vendor\sqlite\sqlite3.c">
       <CompileAs>CompileAsC</CompileAs>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
@@ -1952,6 +1953,7 @@
     <ClInclude Include="src\state\build_data\bounties\definition.h" />
     <ClInclude Include="src\state\build_data\bounties\bounty_catalog.h" />
     <ClInclude Include="src\state\build_data\vendors\repeatable_triggers.h" />
+    <ClInclude Include="src\state\investment\family5_overrides.h" />
     <ClInclude Include="src\state\vendors\charge.h" />
     <ClInclude Include="src\state\vendors\purchase.h" />
     <ClInclude Include="src\state\vendors\rotation.h" />
