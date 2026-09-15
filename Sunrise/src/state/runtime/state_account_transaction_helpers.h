@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <type_traits>
 
@@ -100,15 +101,14 @@ apply_collection_materials(const AccountState& before,
                            AccountState& after,
                            bool& changed) noexcept;
 /**
- * Applies one sale row's cost through the same validation Collections materials use.
- * @param refusal Receives why the charge was refused, or none.
- * @return True when every cost row was payable and paid, or the row was free.
+ * Spends one vendor sale row's price through the same engine Collections materials use.
+ * @param price The row's cost entries; empty charges nothing.
+ * @return True when every entry was paid, or the price was empty.
  */
-[[nodiscard]] bool apply_sale_charge(const AccountState& before,
-                                     const vendors::Charge& charge,
-                                     AccountState& after,
-                                     bool& changed,
-                                     vendors::ChargeRefusal& refusal) noexcept;
+[[nodiscard]] bool apply_sale_price(const AccountState& before,
+                                    std::span<const build_data::vendors::SaleCost> price,
+                                    AccountState& after,
+                                    bool& changed) noexcept;
 [[nodiscard]] bool
 valid_profile_mutation_shape(const PendingProfileItemAcquisition& mutation) noexcept;
 [[nodiscard]] bool materialize_profile_acquisition(const AccountState& current,

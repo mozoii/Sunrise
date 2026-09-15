@@ -74,7 +74,7 @@ bool decode(const VendorDefinitionRecord& record, vendors::Definition& value) no
     return true;
 }
 
-/** Encodes one vendor sale row. Unused cost rows stay zero so the packed row always matches. */
+/** Encodes one vendor sale row. Unused cost entries stay zero so the packed row always matches. */
 bool encode(const vendors::SaleRow& value, VendorSaleRowRecord& record) noexcept {
     record = {};
     if (value.costCount > value.costs.size()) {
@@ -84,6 +84,7 @@ bool encode(const vendors::SaleRow& value, VendorSaleRowRecord& record) noexcept
     record.secondaryItemIndex = value.secondaryItemIndex;
     record.categoryIndex = value.categoryIndex;
     record.costCount = value.costCount;
+    record.priceState = static_cast<std::uint8_t>(value.priceState);
     for (std::size_t cost = 0; cost < value.costCount; ++cost) {
         record.costs[cost].itemIndex = value.costs[cost].itemIndex;
         record.costs[cost].quantity = value.costs[cost].quantity;
@@ -94,7 +95,8 @@ bool encode(const vendors::SaleRow& value, VendorSaleRowRecord& record) noexcept
 /** Decodes one vendor sale row. */
 bool decode(const VendorSaleRowRecord& record, vendors::SaleRow& value) noexcept {
     value = {};
-    if (record.reserved != decltype(record.reserved){} || record.costCount > record.costs.size()) {
+    if (record.reserved != decltype(record.reserved){} || record.costCount > record.costs.size()
+        || record.priceState > static_cast<std::uint8_t>(vendors::PriceState::unreadable)) {
         return false;
     }
     for (std::size_t cost = 0; cost < record.costs.size(); ++cost) {
@@ -114,6 +116,7 @@ bool decode(const VendorSaleRowRecord& record, vendors::SaleRow& value) noexcept
     value.secondaryItemIndex = record.secondaryItemIndex;
     value.categoryIndex = record.categoryIndex;
     value.costCount = record.costCount;
+    value.priceState = static_cast<vendors::PriceState>(record.priceState);
     return true;
 }
 

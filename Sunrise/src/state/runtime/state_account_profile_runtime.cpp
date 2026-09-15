@@ -9,6 +9,7 @@
 #include <string_view>
 #include <utility>
 
+#include "../../core/logging/log.h"
 #include "../build_data/runtime.h"
 #include "runtime.h"
 #include "state_account_transaction_helpers.h"
@@ -294,67 +295,67 @@ apply_collection_materials(const AccountState& before,
         changed);
 }
 
-/** One vendor price-override row, shaped so the material engine consumes it unchanged. */
-struct SaleRequirement {
-    std::uint16_t itemDefinitionIndex{};
-    std::uint32_t quantity{};
-    bool deleteOnAction{true};
-};
-
-/** @return True when the engine could debit this item: a stackable profile item, not a source. */
-[[nodiscard]] static bool payable_cost_item(std::uint16_t itemDefinitionIndex) noexcept {
-    build_data::items::Definition definition{};
-    item_details::Definition detail{};
-    inventory_buckets::Descriptor bucket{};
-    return itemDefinitionIndex != build_data::vendors::kAbsentCostItem
-           && build_data::find_item_definition_index(itemDefinitionIndex, definition)
-           && definition.definitionIndex == itemDefinitionIndex
-           && build_data::find_configured_item_detail(itemDefinitionIndex, detail)
-           && detail.definitionIndex == itemDefinitionIndex
-           && detail.definitionHash == definition.definitionHash
-           && detail.bucketId == definition.bucketId
-           && detail.instancedDefinitionState == item_details::InstancedDefinitionState::stackable
-           && build_data::find_inventory_bucket_descriptor(definition.bucketId, bucket)
-           && bucket.arraySelector == inventory_buckets::ArraySelector::profile
-           && !build_data::is_profile_action_source(definition.definitionIndex,
-                                                    definition.bucketId);
+/**
+ * Writes what a refused price asked for, entry by entry, against what the profile holds.
+ * A held count of -1 names an entry whose item is not installed, which the engine cannot debit.
+ */
+static void report_price_refusal(const AccountState& account,
+                                 std::span<const build_data::vendors::SaleCost> price) noexcept {
+    for (const build_data::vendors::SaleCost& entry : price) {
+        build_data::items::Definition item{};
+        std::int64_t held = -1;
+        if (build_data::find_item_definition_index(entry.itemIndex, item)) {
+            held = 0;
+            for (std::size_t index = 0; index < account.profileItemCount; ++index) {
+                if (account.profileItems[index].definitionHash == item.definitionHash) {
+                    held += account.profileItems[index].quantity;
+                }
+            }
+        }
+        core::log::writef(core::log::Channel::state,
+                          core::log::Level::warn,
+                          "ev=vendor stage=price result=fail item=%u quantity=%u held=%lld",
+                          static_cast<unsigned>(entry.itemIndex),
+                          entry.quantity,
+                          static_cast<long long>(held));
+    }
 }
 
-[[nodiscard]] bool apply_sale_charge(const AccountState& before,
-                                     const vendors::Charge& charge,
-                                     AccountState& after,
-                                     bool& changed,
-                                     vendors::ChargeRefusal& refusal) noexcept {
+/**
+ * Spends one vendor sale row's price through the engine that spends Collections materials, so a
+ * cost item is validated and debited by the same rules: a stackable profile item, every stack
+ * summed, refused when short, then debited and compacted.
+ * @param price The row's cost entries; empty charges nothing.
+ * @param after Receives the charged account, or `before` again when refused.
+ * @return True when every entry was paid, or the price was empty.
+ */
+[[nodiscard]] bool apply_sale_price(const AccountState& before,
+                                    std::span<const build_data::vendors::SaleCost> price,
+                                    AccountState& after,
+                                    bool& changed) noexcept {
+    namespace materials = build_data::material_requirements;
     after = before;
     changed = false;
-    refusal = vendors::ChargeRefusal::none;
-    if (charge.is_free()) {
-        return true;
+    if (price.size() > build_data::vendors::kSaleCostCapacity) {
+        return false;
     }
-    std::array<SaleRequirement, build_data::vendors::kSaleCostCapacity> requirements{};
-    std::size_t requirementCount = 0;
-    for (const build_data::vendors::SaleCost& cost : charge.entries()) {
-        if (cost.quantity == 0) {
-            continue;
-        }
-        // A cost row the engine cannot debit is a row this build does not understand, which is
-        // refused as its own thing rather than reported as an empty wallet.
-        if (!payable_cost_item(cost.itemIndex)) {
-            refusal = vendors::ChargeRefusal::malformedCost;
-            return false;
-        }
-        requirements[requirementCount++] = {cost.itemIndex, cost.quantity, true};
+    // Every entry is consumed on purchase; nothing in a sale row is a held-only requirement.
+    std::array<materials::Requirement, build_data::vendors::kSaleCostCapacity> requirements{};
+    for (std::size_t index = 0; index < price.size(); ++index) {
+        requirements[index] = {.quantity = price[index].quantity,
+                               .itemDefinitionIndex = price[index].itemIndex,
+                               .deleteOnAction = true};
     }
-    if (apply_material_requirements<SaleRequirement>(
+    if (apply_material_requirements(
             before,
-            std::span<const SaleRequirement>{requirements.data(), requirementCount},
+            std::span<const materials::Requirement>{requirements.data(), price.size()},
             after,
             changed)) {
         return true;
     }
     after = before;
     changed = false;
-    refusal = vendors::ChargeRefusal::insufficient;
+    report_price_refusal(before, price);
     return false;
 }
 
