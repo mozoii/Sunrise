@@ -21,7 +21,6 @@
 #include "../../state/build_data/vendors/repeatable_triggers.h"
 #include "../../state/build_data/vendors/vendor_catalog.h"
 #include "../../state/runtime/runtime.h"
-#include "../../state/vendors/purchase.h"
 #include "internal_actions.h"
 #include "web_service_actions.h"
 
@@ -125,16 +124,6 @@ void report_purchase(std::uint16_t opcode,
            && vendor_domain::find_index(static_cast<std::uint16_t>(vendorIndex), entry)
            && vendor_domain::find(entry.definitionHash, definition);
 }
-
-/** One vendor sale row as a purchase names it, resolved from the request's two indices. */
-struct ResolvedSale {
-    /** Item the row sells. */
-    std::uint16_t itemDefinitionIndex{kUnavailableDefinitionIndex};
-    /** Row +100, or `kAbsentCategoryIndex` when the request named no sale row. */
-    std::int32_t categoryIndex{state::build_data::vendors::kAbsentCategoryIndex};
-    /** The row's own cost. */
-    state::vendors::Charge charge{};
-};
 
 /** What the substitution table said about one sale row's item. */
 enum class Substitution : std::uint8_t {
@@ -310,23 +299,26 @@ constexpr std::array<LegacyQuestStep, 3> kLegacyQuestSteps{{
     // A sale row holds its cost as u32; the mutation charges an i32, so a wider row is refused.
     constexpr auto kQuantityLimit =
         static_cast<std::uint32_t>((std::numeric_limits<std::int32_t>::max)());
-    const state::vendors::Charge charge = state::vendors::Charge::of(row);
-    // An exchange charges exactly one stack, so a row declaring several currencies is not one.
-    const state::build_data::vendors::SaleCost single =
-        charge.count == 1 ? charge.costs[0] : state::build_data::vendors::SaleCost{};
+    // An exchange charges exactly one static stack, so a row that is not plainly priced, or
+    // declares any number of entries but one, is not one.
+    const std::span<const vendor_domain::SaleCost> price = vendor_domain::cost_entries(row);
+    const vendor_domain::SaleCost single = price.size() == 1 ? price[0] : vendor_domain::SaleCost{};
     state::build_data::items::Definition cost{};
     // A recycle row owns its purchase from here, refused or not: falling through would grant the
     // placeholder, which is the failure this path exists to avoid.
-    if (charge.count != 1 || charge.is_free() || single.quantity > kQuantityLimit
+    if (row.priceState != vendor_domain::PriceState::plain || price.size() != 1
+        || single.quantity == 0 || single.quantity > kQuantityLimit
         || !state::build_data::find_item_definition_index(single.itemIndex, cost)) {
         core::log::writef(core::log::Channel::server,
                           core::log::Level::warn,
                           "ev=vendor_exchange stage=apply result=fail reason=cost vendor=%d "
-                          "hash=0x%08X row=%d costs=%u cost_item=%u quantity=%u",
+                          "hash=0x%08X row=%d price_state=%u entries=%zu cost_item=%u "
+                          "quantity=%u",
                           vendorIndex,
                           entry.definitionHash,
                           rowIndex,
-                          static_cast<unsigned>(charge.count),
+                          static_cast<unsigned>(row.priceState),
+                          price.size(),
                           static_cast<unsigned>(single.itemIndex),
                           static_cast<unsigned>(single.quantity));
         return true;
@@ -351,47 +343,22 @@ constexpr std::array<LegacyQuestStep, 3> kLegacyQuestSteps{{
 }
 
 /**
- * Names a refused charge for the purchase line, and writes what the row asked for.
- * @return The refusal reason, or the caller's own reason when the charge did not refuse.
- */
-[[nodiscard]] const char* charge_refusal_reason(state::vendors::ChargeRefusal refusal,
-                                                const state::vendors::Charge& charge,
-                                                const char* grantReason) noexcept {
-    if (refusal == state::vendors::ChargeRefusal::none) {
-        return grantReason;
-    }
-    const state::build_data::vendors::SaleCost first =
-        charge.count != 0 ? charge.costs[0] : state::build_data::vendors::SaleCost{};
-    const char* const reason = refusal == state::vendors::ChargeRefusal::insufficient
-                                   ? "insufficient_currency"
-                                   : "cost_item";
-    core::log::writef(core::log::Channel::server,
-                      core::log::Level::warn,
-                      "ev=vendor stage=charge result=fail reason=%s costs=%u cost_item=%u "
-                      "quantity=%u",
-                      reason,
-                      static_cast<unsigned>(charge.count),
-                      static_cast<unsigned>(first.itemIndex),
-                      static_cast<unsigned>(first.quantity));
-    return reason;
-}
-
-/**
  * Grants one item, given the collectible that owns it and its definition index.
  * Acquisition state is keyed by collectible, so the caller resolves one first.
  * @param message Request being answered, for the log line.
  * @param collectibleIndex Collectible that owns the item.
  * @param itemDefinitionIndex Item to grant.
- * @param purchase A vendor row's cost and weekly claim, charged instead of the collectible's
- *        material set; absent for a Collections pull, which pays with the collectible's materials.
+ * @param price A vendor row's cost entries, spent in place of the collectible's material set;
+ *        absent for a Collections pull, which pays with the collectible's materials.
  * @param outcome Receives the prepared mutation on success.
  * @return True when a mutation is prepared. A pursuit already held prepares none.
  */
-bool grant_item_definition(const middleware::web_service::Message& message,
-                           std::uint16_t collectibleIndex,
-                           std::uint16_t itemDefinitionIndex,
-                           const std::optional<state::vendors::Purchase>& purchase,
-                           Outcome& outcome) noexcept {
+bool grant_item_definition(
+    const middleware::web_service::Message& message,
+    std::uint16_t collectibleIndex,
+    std::uint16_t itemDefinitionIndex,
+    std::optional<std::span<const state::build_data::vendors::SaleCost>> price,
+    Outcome& outcome) noexcept {
     state::build_data::items::Definition definition{};
     if (!state::build_data::find_item_definition_index(itemDefinitionIndex, definition)) {
         report_item_acquisition(
@@ -448,23 +415,15 @@ bool grant_item_definition(const middleware::web_service::Message& message,
                                     0);
             return false;
         }
-        state::vendors::ChargeRefusal refusal = state::vendors::ChargeRefusal::none;
-        const bool prepared =
-            purchase.has_value()
-                ? state::prepare_vendor_profile_item_acquisition(
-                      collectibleIndex, definition.definitionHash, *purchase, *mutation, refusal)
-                : state::prepare_profile_item_acquisition(
-                      collectibleIndex, definition.definitionHash, *mutation);
-        if (!prepared) {
+        if (!state::prepare_profile_item_acquisition(
+                collectibleIndex, definition.definitionHash, price, *mutation)) {
             clear_mutation(outcome);
-            report_item_acquisition(
-                message,
-                charge_refusal_reason(
-                    refusal, purchase.value_or(state::vendors::Purchase{}).charge, "profile_state"),
-                collectibleIndex,
-                itemDefinitionIndex,
-                definition.definitionHash,
-                0);
+            report_item_acquisition(message,
+                                    "profile_state",
+                                    collectibleIndex,
+                                    itemDefinitionIndex,
+                                    definition.definitionHash,
+                                    0);
             return false;
         }
         return true;
@@ -489,23 +448,11 @@ bool grant_item_definition(const middleware::web_service::Message& message,
                                 0);
         return false;
     }
-    state::vendors::ChargeRefusal refusal = state::vendors::ChargeRefusal::none;
-    const bool prepared =
-        purchase.has_value()
-            ? state::prepare_vendor_item_acquisition(
-                  collectibleIndex, definition.definitionHash, *purchase, *mutation, refusal)
-            : state::prepare_item_acquisition(
-                  collectibleIndex, definition.definitionHash, *mutation);
-    if (!prepared) {
+    if (!state::prepare_item_acquisition(
+            collectibleIndex, definition.definitionHash, price, *mutation)) {
         clear_mutation(outcome);
         report_item_acquisition(
-            message,
-            charge_refusal_reason(
-                refusal, purchase.value_or(state::vendors::Purchase{}).charge, "state"),
-            collectibleIndex,
-            itemDefinitionIndex,
-            definition.definitionHash,
-            0);
+            message, "state", collectibleIndex, itemDefinitionIndex, definition.definitionHash, 0);
         return false;
     }
     return true;
@@ -552,16 +499,16 @@ void acquire_item(const middleware::web_service::Message& message, Outcome& outc
  * Resolves one vendor row to the item it sells. Shared by 901 and 904, which name a row alike.
  * @param vendorIndex Vendor table row.
  * @param rowIndex Sale row within that vendor.
- * @param sale Receives the row: its vendor, item, category and cost.
+ * @param row Receives the sale row: its item, category and price.
  * @param reason Receives the step that failed, when one does.
  * @return True when the row resolved.
  */
 [[nodiscard]] bool resolve_vendor_row(std::int32_t vendorIndex,
                                       std::int32_t rowIndex,
-                                      ResolvedSale& sale,
+                                      state::build_data::vendors::SaleRow& row,
                                       const char*& reason) noexcept {
     namespace vendor_domain = state::build_data::vendors;
-    sale = {};
+    row = {};
     if (vendorIndex < 0 || rowIndex < 0) {
         reason = "negative_index";
         return false;
@@ -572,14 +519,10 @@ void acquire_item(const middleware::web_service::Message& message, Outcome& outc
         reason = "vendor";
         return false;
     }
-    vendor_domain::SaleRow row{};
     if (!vendor_domain::sale_row(definition, static_cast<std::size_t>(rowIndex), row)) {
         reason = "sale_row";
         return false;
     }
-    sale.itemDefinitionIndex = row.itemIndex;
-    sale.categoryIndex = row.categoryIndex;
-    sale.charge = state::vendors::Charge::of(row);
     return true;
 }
 
@@ -701,17 +644,33 @@ constexpr std::uint32_t kAbsentNameHash = 0x811C9DC5U;
  * @param opcode Opcode to report under.
  * @param vendorIndex Vendor the request names.
  * @param rowIndex Sale row the request names.
- * @param sale The resolved row; its cost is spent only by a plain grant.
+ * @param row The resolved sale row. Its price is spent by a grant and by a bounty roll, and an
+ *        exchange spends it as the stack it recycles.
  * @param outcome Receives whatever mutation the row prepared.
  */
 void settle_vendor_row(const middleware::web_service::Message& message,
                        std::uint16_t opcode,
                        std::int32_t vendorIndex,
                        std::int32_t rowIndex,
-                       const ResolvedSale& sale,
+                       const state::build_data::vendors::SaleRow& row,
                        Outcome& outcome) noexcept {
-    const std::int32_t categoryIndex = sale.categoryIndex;
-    const std::uint16_t itemDefinitionIndex = sale.itemDefinitionIndex;
+    namespace vendor_domain = state::build_data::vendors;
+    const std::int32_t categoryIndex = row.categoryIndex;
+    const std::uint16_t itemDefinitionIndex = row.itemIndex;
+    // A row is sold only while its static entries are its price. A conditional row's price
+    // depends on state this build does not evaluate, and an unreadable row's is unknown.
+    if (row.priceState != vendor_domain::PriceState::plain) {
+        report_purchase(opcode,
+                        "fail",
+                        row.priceState == vendor_domain::PriceState::conditional
+                            ? "conditional_price"
+                            : "unreadable_price",
+                        vendorIndex,
+                        rowIndex,
+                        itemDefinitionIndex);
+        return;
+    }
+    const std::span<const vendor_domain::SaleCost> price = vendor_domain::cost_entries(row);
     std::uint16_t rolledBounty = kUnavailableDefinitionIndex;
     if (roll_vendor_bounty(vendorIndex, categoryIndex, rolledBounty)) {
         report_purchase(opcode,
@@ -724,9 +683,9 @@ void settle_vendor_row(const middleware::web_service::Message& message,
         if (rolledBounty != kUnavailableDefinitionIndex) {
             std::uint16_t rolledCollectible = state::build_data::collectibles::kNoCollectibleIndex;
             (void)find_collectible_for_item(rolledBounty, rolledCollectible);
-            // A rolled bounty is free: the row's cost fields belong to its placeholder item.
-            (void)grant_item_definition(
-                message, rolledCollectible, rolledBounty, state::vendors::Purchase{}, outcome);
+            // The tile prices whatever it rolls: only its placeholder item is withheld, never
+            // its price. A tile the character cannot pay for grants nothing.
+            (void)grant_item_definition(message, rolledCollectible, rolledBounty, price, outcome);
         }
         return;
     }
@@ -759,14 +718,13 @@ void settle_vendor_row(const middleware::web_service::Message& message,
     }
     std::uint16_t collectibleIndex = state::build_data::collectibles::kNoCollectibleIndex;
     const bool collected = find_collectible_for_item(granted, collectibleIndex);
-    const state::vendors::Purchase purchase{.charge = sale.charge};
     report_purchase(opcode,
                     "ok",
                     collected ? "resolved" : "resolved_no_collectible",
                     vendorIndex,
                     rowIndex,
                     granted);
-    (void)grant_item_definition(message, collectibleIndex, granted, purchase, outcome);
+    (void)grant_item_definition(message, collectibleIndex, granted, price, outcome);
 }
 
 /**
@@ -797,12 +755,12 @@ void acquire_quest(const middleware::web_service::Message& message, Outcome& out
     // Reading the slot as a sale row here would grant whatever sits at that row.
     const bool rowless = row < 0;
     // A rowless 904 is an interaction reply, so its slot names the interaction, not a sale row:
-    // it has no category and no cost.
-    ResolvedSale sale{};
-    const bool located = rowless ? resolve_rowless_quest(request.vendorIndex,
-                                                         request.slotIndex,
-                                                         sale.itemDefinitionIndex)
-                                 : resolve_vendor_row(request.vendorIndex, row, sale, reason);
+    // it has no category and no price.
+    state::build_data::vendors::SaleRow sale{};
+    sale.categoryIndex = state::build_data::vendors::kAbsentCategoryIndex;
+    const bool located =
+        rowless ? resolve_rowless_quest(request.vendorIndex, request.slotIndex, sale.itemIndex)
+                : resolve_vendor_row(request.vendorIndex, row, sale, reason);
     if (!located) {
         report_purchase(quest::kOpcode,
                         "fail",
@@ -832,7 +790,7 @@ void purchase_item(const middleware::web_service::Message& message, Outcome& out
         return;
     }
     const char* reason = "unknown";
-    ResolvedSale sale{};
+    state::build_data::vendors::SaleRow sale{};
     if (!resolve_vendor_row(request.vendorIndex, request.saleIndex, sale, reason)) {
         report_purchase(purchase::kOpcode,
                         "fail",

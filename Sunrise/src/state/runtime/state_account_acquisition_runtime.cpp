@@ -165,18 +165,20 @@ using Quest = build_data::items::QuestInitialization;
  * Inventory and quest state must come from the same locked save view.
  * @param collectibleIndex Collections row, or kNoCollectibleIndex for an item-only grant.
  * @param definitionHash Item definition to grant.
+ * @param price A vendor row's cost, spent in place of the collectible's materials; or absent.
  * @param mutation Receives a pending grant; prepared is set only on success.
  * @return False when identity, costs, capacity, or saved state prevent the grant.
  */
 bool prepare_item_acquisition(std::uint16_t collectibleIndex,
                               std::uint32_t definitionHash,
+                              std::optional<std::span<const build_data::vendors::SaleCost>> price,
                               PendingItemAcquisition& mutation) noexcept {
     const std::lock_guard lock(investment::store::g_mutex);
     mutation = {};
     const AccountState account = account_snapshot();
     build_data::collectibles::Definition collectible{};
     build_data::items::Definition grantedDefinition{};
-    // A vendor purchase names an item, not a collectible, so the collectible steps are skipped
+    // A vendor row may name an item with no collectible, so the collectible steps are skipped
     // rather than faked. The item is still validated, just by its own hash.
     const bool hasCollectible = collectibleIndex != build_data::collectibles::kNoCollectibleIndex;
     if (definitionHash == authored_inventory::kNoDefinitionHash || !account::valid(account)
@@ -199,72 +201,19 @@ bool prepare_item_acquisition(std::uint16_t collectibleIndex,
 
     AccountState chargedAccount = account;
     bool profileChanged = false;
-    // Nothing is charged without a collectible: a Collections pull pays with the collectible's
-    // material requirements. A vendor row's own cost is spent by the prepare_vendor_* siblings.
-    if (hasCollectible
-        && !apply_collection_materials(account, collectible, chargedAccount, profileChanged)) {
+    // A vendor row pays its own price, whatever its collectible would charge from Collections;
+    // a Collections pull pays with the collectible's materials, and an item-only grant is free.
+    const bool paid = price.has_value()
+                          ? apply_sale_price(account, *price, chargedAccount, profileChanged)
+                          : !hasCollectible
+                                || apply_collection_materials(
+                                    account, collectible, chargedAccount, profileChanged);
+    if (!paid) {
         return false;
     }
 
-    return finalize_item_acquisition(
-        account,
-        chargedAccount,
-        definitionHash,
-        profileChanged,
-        {.materialRequirementSetHash = collectible.materialRequirementSetHash,
-         .collectibleIndex = collectibleIndex,
-         .materialRequirementCount = collectible.materialRequirementCount},
-        mutation);
-}
-
-/**
- * A sale row's cost replaces the collectible's material set; the collectible, when the row has
- * one, still names the grant so commit can re-check it.
- * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
- * @param definitionHash Item definition the row sells.
- * @param purchase The row's cost.
- * @param mutation Receives a pending grant; prepared is set only on success.
- * @param refusal Receives why the cost refused, or none when the grant itself refused.
- * @return False when identity, cost, capacity, or saved state prevent the grant.
- */
-bool prepare_vendor_item_acquisition(std::uint16_t collectibleIndex,
-                                     std::uint32_t definitionHash,
-                                     const vendors::Purchase& purchase,
-                                     PendingItemAcquisition& mutation,
-                                     vendors::ChargeRefusal& refusal) noexcept {
-    const std::lock_guard lock(investment::store::g_mutex);
-    mutation = {};
-    refusal = vendors::ChargeRefusal::none;
-    const AccountState account = account_snapshot();
-    build_data::collectibles::Definition collectible{};
-    build_data::items::Definition grantedDefinition{};
-    const bool hasCollectible = collectibleIndex != build_data::collectibles::kNoCollectibleIndex;
-    if (definitionHash == authored_inventory::kNoDefinitionHash || !account::valid(account)
-        || !valid_profile_inventory(account)) {
-        return false;
-    }
-    if (hasCollectible) {
-        if (!build_data::find_collectible_definition(collectibleIndex, collectible)
-            || collectible.itemDefinitionIndex
-                   == build_data::collectibles::kUnavailableItemDefinitionIndex
-            || !build_data::find_item_definition_index(collectible.itemDefinitionIndex,
-                                                       grantedDefinition)
-            || grantedDefinition.definitionHash != definitionHash) {
-            return false;
-        }
-    } else if (!build_data::find_item_definition_hash(definitionHash, grantedDefinition)
-               || grantedDefinition.definitionHash != definitionHash) {
-        return false;
-    }
-
-    AccountState chargedAccount = account;
-    bool profileChanged = false;
-    if (!apply_sale_charge(account, purchase.charge, chargedAccount, profileChanged, refusal)) {
-        return false;
-    }
-
-    // Commit re-checks the collectible's own cost fields, so the mutation carries those and the
-    // sale charge is proven only by its before/after profile images.
+    // Commit re-checks the collectible's own cost fields, so the mutation carries those; a sale
+    // price is proven only by its before/after profile images.
     return finalize_item_acquisition(
         account,
         chargedAccount,
@@ -770,10 +719,15 @@ finalize_profile_item_acquisition(const AccountState& account,
 
 } // namespace runtime::detail
 
-/** Prepares one checked profile-stack increment or append for a Collections pull. */
-bool prepare_profile_item_acquisition(std::uint16_t collectibleIndex,
-                                      std::uint32_t definitionHash,
-                                      PendingProfileItemAcquisition& mutation) noexcept {
+/**
+ * Prepares one checked profile-stack increment or append.
+ * @param price A vendor row's cost, spent in place of the collectible's materials; or absent.
+ */
+bool prepare_profile_item_acquisition(
+    std::uint16_t collectibleIndex,
+    std::uint32_t definitionHash,
+    std::optional<std::span<const build_data::vendors::SaleCost>> price,
+    PendingProfileItemAcquisition& mutation) noexcept {
     mutation = {};
     const AccountState account = account_snapshot();
     build_data::collectibles::Definition collectible{};
@@ -795,63 +749,22 @@ bool prepare_profile_item_acquisition(std::uint16_t collectibleIndex,
     }
     AccountState chargedAccount = account;
     bool materialsChanged = false;
-    // Nothing is charged without a collectible: a Collections pull pays with the collectible's
-    // material requirements. A vendor row's own cost is spent by the prepare_vendor_* siblings.
-    if (collectibleIndex != build_data::collectibles::kNoCollectibleIndex
-        && !apply_collection_materials(account, collectible, chargedAccount, materialsChanged)) {
+    // A vendor row pays its own price, whatever its collectible would charge from Collections;
+    // a Collections pull pays with the collectible's materials, and an item-only grant is free.
+    const bool paid = price.has_value()
+                          ? apply_sale_price(account, *price, chargedAccount, materialsChanged)
+                          : collectibleIndex == build_data::collectibles::kNoCollectibleIndex
+                                || apply_collection_materials(
+                                    account, collectible, chargedAccount, materialsChanged);
+    if (!paid) {
         return false;
     }
     (void)materialsChanged;
     const bool actionSource =
         build_data::is_profile_action_source(item.definitionIndex, item.bucketId);
 
-    return finalize_profile_item_acquisition(
-        account,
-        chargedAccount,
-        definitionHash,
-        detail,
-        actionSource,
-        1,
-        {.materialRequirementSetHash = collectible.materialRequirementSetHash,
-         .collectibleIndex = collectibleIndex,
-         .materialRequirementCount = collectible.materialRequirementCount},
-        mutation);
-}
-
-/** Prepares one vendor sale row's profile-stack grant, charging the row's own cost. */
-bool prepare_vendor_profile_item_acquisition(std::uint16_t collectibleIndex,
-                                             std::uint32_t definitionHash,
-                                             const vendors::Purchase& purchase,
-                                             PendingProfileItemAcquisition& mutation,
-                                             vendors::ChargeRefusal& refusal) noexcept {
-    mutation = {};
-    refusal = vendors::ChargeRefusal::none;
-    const AccountState account = account_snapshot();
-    build_data::collectibles::Definition collectible{};
-    build_data::items::Definition item{};
-    item_details::Definition detail{};
-    if (definitionHash == authored_inventory::kNoDefinitionHash || !account::valid(account)
-        || !valid_profile_inventory(account)
-        || !build_data::find_item_definition_hash(definitionHash, item)
-        || (collectibleIndex != build_data::collectibles::kNoCollectibleIndex
-            && (!build_data::find_collectible_definition(collectibleIndex, collectible)
-                || collectible.itemDefinitionIndex
-                       == build_data::collectibles::kUnavailableItemDefinitionIndex
-                || item.definitionIndex != collectible.itemDefinitionIndex))
-        || !resolve_profile_item(item.definitionIndex, item, detail)
-        || item.definitionHash != definitionHash) {
-        return false;
-    }
-    AccountState chargedAccount = account;
-    bool profileChanged = false;
-    if (!apply_sale_charge(account, purchase.charge, chargedAccount, profileChanged, refusal)) {
-        return false;
-    }
-    const bool actionSource =
-        build_data::is_profile_action_source(item.definitionIndex, item.bucketId);
-
-    // Commit re-checks the collectible's own cost fields, so the mutation carries those and the
-    // sale charge is proven only by its before/after profile images.
+    // Commit re-checks the collectible's own cost fields, so the mutation carries those; a sale
+    // price is proven only by its before/after profile images.
     return finalize_profile_item_acquisition(
         account,
         chargedAccount,

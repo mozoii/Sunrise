@@ -546,11 +546,11 @@ struct VendorDefinitionRecord {
     std::uint16_t thirdCount{};
 };
 
-/** Disk form of one price-override row of a vendor sale row. */
+/** Disk form of one cost entry of a vendor sale row. */
 struct VendorSaleCostRecord {
     std::uint32_t quantity{};
     std::uint16_t itemIndex{};
-    /** Must be zero, so the packed cost row always matches. */
+    /** Must be zero, so the packed cost entry always matches. */
     std::uint16_t reserved{};
 };
 
@@ -561,8 +561,10 @@ struct VendorSaleRowRecord {
     std::uint16_t itemIndex{};
     std::uint16_t secondaryItemIndex{};
     std::uint8_t costCount{};
+    /** `vendors::PriceState`, stored as its underlying value. */
+    std::uint8_t priceState{};
     /** Must be zero, so the packed sale row always matches. */
-    std::array<std::uint8_t, 3> reserved{};
+    std::array<std::uint8_t, 2> reserved{};
 };
 
 /** Disk form of one vendor category row. */
